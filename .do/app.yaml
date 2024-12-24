@@ -3,7 +3,7 @@ services:
   - name: sample-python
     dockerfile_path: ./Dockerfile
     github:
-      repo: digitalocean/sample-python
+      repo: github.com/JTMP99/python-app
       branch: main
       deploy_on_push: true
     routes:
