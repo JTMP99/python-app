@@ -1,10 +1,7 @@
-# Start from a lightweight Python base
 FROM python:3.10-slim-buster
 
-# Set the working directory
 WORKDIR /app
 
-# Install system dependencies for Chrome/Chromium
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -18,15 +15,12 @@ RUN apt-get update && apt-get install -y \
     chromium \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install Python dependencies
 COPY requirements.txt .
+RUN echo "werkzeug==2.0.3" >> requirements.txt
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-# Copy the rest of your code
 COPY . .
 
-# Expose port 8080 for Flask
 EXPOSE 8080
 
-# Finally, run the app via Gunicorn, pointing to server:app
 CMD gunicorn --bind 0.0.0.0:8080 server:app
