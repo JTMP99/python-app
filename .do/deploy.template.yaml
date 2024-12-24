@@ -5,4 +5,4 @@ spec:
       dockerfile_path: ./Dockerfile
       git:
         branch: main
-        repo_clone_url: https://github.com/digitalocean/sample-python
+        repo_clone_url: https://github.com/JTMP99/python-app
