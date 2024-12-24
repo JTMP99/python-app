@@ -23,7 +23,7 @@ def scrape():
     options.add_argument("--disable-dev-shm-usage")
 
     driver = webdriver.Chrome(
-        service=Service(ChromeDriverManager(version="114.0.5735.90").install()),
+        service=Service(ChromeDriverManager(driver_version="114.0.5735.90").install()),
         options=options
     )
 
