@@ -2,7 +2,7 @@ FROM python:3.10-slim-buster
 
 WORKDIR /app
 
-# 1) Install basic tools + libs needed for Chrome & WebDriver
+# 1) Install system tools and libraries needed by Chrome & Selenium
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y \
     libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# 2) Add Google Chrome's official repo & install the current stable version
+# 2) Add Google’s repo & install whatever the current stable Chrome is
 RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
  && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
     > /etc/apt/sources.list.d/google-chrome.list \
@@ -31,11 +31,9 @@ RUN google-chrome --version
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 4) Copy your actual code
+# 4) Copy the rest of your code
 COPY . .
 
-# 5) Expose the default Flask/Gunicorn port
 EXPOSE 8080
 
-# 6) Launch Gunicorn serving `app` from `server.py`
 CMD gunicorn --bind 0.0.0.0:8080 server:app
