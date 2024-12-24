@@ -16,7 +16,11 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
+
+# Force older Werkzeug and Flask versions to avoid 'url_quote' import error
+RUN echo "Flask==2.0.3" >> requirements.txt
 RUN echo "werkzeug==2.0.3" >> requirements.txt
+
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 COPY . .
