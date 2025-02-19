@@ -4,32 +4,41 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import WebDriverException, TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from functools import wraps
 import logging
 import time
 import traceback
-from config import Config
+import os
 
 # Initialize Flask app
 app = Flask(__name__)
 
 # Configure logging
 logging.basicConfig(
-    level=getattr(logging, Config.LOG_LEVEL),
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
 def setup_chrome_options() -> Options:
     """Configure Chrome options for headless operation."""
-    options = Options()
-    for option in Config.CHROME_OPTIONS:
-        options.add_argument(option)
-    return options
+    chrome_options = Options()
+    chrome_options.add_argument('--headless=new')
+    chrome_options.add_argument('--no-sandbox')
+    chrome_options.add_argument('--disable-dev-shm-usage')
+    chrome_options.add_argument('--disable-gpu')
+    chrome_options.add_argument('--disable-setuid-sandbox')
+    chrome_options.add_argument('--disable-software-rasterizer')
+    chrome_options.add_argument('--disable-extensions')
+    chrome_options.add_argument('--single-process')
+    chrome_options.add_argument('--ignore-certificate-errors')
+    chrome_options.add_argument('--remote-debugging-port=9222')
+    # Run as non-root user
+    chrome_options.add_argument('--user-data-dir=/tmp/chrome-data')
+    return chrome_options
 
-def retry_on_failure(max_retries=Config.MAX_RETRIES, delay=Config.RETRY_DELAY):
+def retry_on_failure(max_retries=3, delay=5):
     """Decorator to retry operations on failure."""
     def decorator(func):
         @wraps(func)
@@ -47,17 +56,6 @@ def retry_on_failure(max_retries=Config.MAX_RETRIES, delay=Config.RETRY_DELAY):
             raise last_exception
         return wrapper
     return decorator
-
-@app.before_request
-def log_request_info():
-    """Log incoming request details."""
-    logger.info(f"Request: {request.method} {request.url}")
-
-@app.after_request
-def log_response_info(response):
-    """Log response details."""
-    logger.info(f"Response: {response.status}")
-    return response
 
 @app.route("/health")
 def health():
@@ -80,9 +78,18 @@ def versions():
     driver = None
     try:
         options = setup_chrome_options()
-        driver = webdriver.Chrome(options=options)
-        browser_version = driver.capabilities['browserVersion']
-        driver_version = driver.capabilities['chrome']['chromedriverVersion'].split(' ')[0]
+        service = Service(
+            port=9515,
+            service_args=['--no-sandbox', '--disable-gpu']
+        )
+        driver = webdriver.Chrome(
+            service=service,
+            options=options
+        )
+        
+        browser_version = driver.capabilities.get('browserVersion', 'unknown')
+        driver_info = driver.capabilities.get('chrome', {})
+        driver_version = driver_info.get('chromedriverVersion', 'unknown').split(' ')[0]
         
         return jsonify({
             "status": "success",
@@ -92,7 +99,11 @@ def versions():
         })
     except Exception as e:
         logger.error(f"Version check failed: {traceback.format_exc()}")
-        raise
+        return jsonify({
+            "status": "error",
+            "error": str(e),
+            "timestamp": time.time()
+        }), 500
     finally:
         if driver:
             driver.quit()
@@ -104,7 +115,14 @@ def scrape():
     driver = None
     try:
         options = setup_chrome_options()
-        driver = webdriver.Chrome(options=options)
+        service = Service(
+            port=9515,
+            service_args=['--no-sandbox', '--disable-gpu']
+        )
+        driver = webdriver.Chrome(
+            service=service,
+            options=options
+        )
         
         # Set page load timeout
         driver.set_page_load_timeout(30)
@@ -132,23 +150,21 @@ def scrape():
         
     except TimeoutException:
         logger.error("Page load timed out")
-        raise
+        return jsonify({
+            "status": "error",
+            "error": "Page load timed out",
+            "timestamp": time.time()
+        }), 504
     except Exception as e:
         logger.error(f"Scrape failed: {traceback.format_exc()}")
-        raise
+        return jsonify({
+            "status": "error",
+            "error": str(e),
+            "timestamp": time.time()
+        }), 500
     finally:
         if driver:
             driver.quit()
-
-@app.errorhandler(Exception)
-def handle_error(error):
-    """Global error handler."""
-    logger.error(f"Unhandled error: {traceback.format_exc()}")
-    return jsonify({
-        "error": str(error),
-        "type": error.__class__.__name__,
-        "timestamp": time.time()
-    }), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
