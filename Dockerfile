@@ -11,10 +11,10 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy requirements and modify for minimal install
+# Copy requirements first
 COPY requirements.txt .
 
-# Split package installation to manage memory better
+# Install base requirements
 RUN pip install --no-cache-dir gunicorn==20.1.0 \
     Flask==2.2.2 \
     requests==2.28.2 \
@@ -31,7 +31,7 @@ RUN pip install --no-cache-dir openai-whisper==20230314
 ###############################
 FROM python:3.10-slim
 
-# Install Chrome dependencies and download Chrome directly
+# Install Chrome and dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     wget \
@@ -68,13 +68,29 @@ COPY --from=builder /usr/local/bin/ /usr/local/bin/
 # Copy application code
 COPY . .
 
-# Create captures directory
+# Create necessary directories
 RUN mkdir -p /app/captures && chmod 777 /app/captures
 
+# Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PORT=8080
+    PORT=8080 \
+    FLASK_APP=run.py \
+    FLASK_ENV=production \
+    GUNICORN_CMD_ARGS="--bind=0.0.0.0:8080 --workers=1 --threads=2 --timeout=120 --log-level=info --error-logfile=- --access-logfile=-"
 
 EXPOSE 8080
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "2", "run:app"]
+# Add healthcheck
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/ || exit 1
+
+# Create start script
+RUN echo '#!/bin/bash\n\
+python -c "import sys; print(sys.path)"\n\
+python -c "from run import app; print(app)"\n\
+exec gunicorn --bind 0.0.0.0:8080 --workers 1 --threads 2 --timeout 120 --log-level info --error-logfile - --access-logfile - "run:app"' > /app/start.sh \
+    && chmod +x /app/start.sh
+
+# Use start script
+CMD ["/app/start.sh"]
