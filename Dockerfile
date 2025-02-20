@@ -49,8 +49,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxdamage1 \
     libxrandr2 \
     xdg-utils \
-    && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+    && mkdir -p /etc/apt/keyrings \
+    && wget -q -O- https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor > /etc/apt/keyrings/google.gpg \
+    && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update \
     && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/* \
@@ -65,19 +66,23 @@ WORKDIR /app
 COPY --from=builder /root/.local /root/.local
 ENV PATH=/root/.local/bin:$PATH
 
+# Create directory for storing captured files with appropriate permissions
+RUN mkdir -p /app/captures && chown -R nobody:nogroup /app/captures
+
 # Copy application code
 COPY . .
 
-# Create directory for storing captured files
-RUN mkdir -p /app/captures && chmod 777 /app/captures
-
 # Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PORT=8080
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PORT=8080 \
+    GUNICORN_CMD_ARGS="--bind=0.0.0.0:8080 --workers=2 --threads=4 --timeout=120"
+
+# Switch to non-root user
+USER nobody
 
 # Expose port
 EXPOSE 8080
 
 # Use Gunicorn as the production server
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4", "run:app"]
+CMD ["gunicorn", "run:app"]
