@@ -1,12 +1,13 @@
 # Use Python 3.10 slim image
 FROM python:3.10-slim
 
-# Install system dependencies and additional libraries required by Chrome
+# Install system dependencies and additional libraries required by Chrome and FFmpeg
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
     unzip \
     gnupg2 \
+    ffmpeg \
     fonts-liberation \
     libappindicator3-1 \
     libasound2 \
@@ -27,36 +28,21 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add
     && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
-# Set environment variable for Chrome binary location
+# Set environment variable for Chrome binary
 ENV GOOGLE_CHROME_BIN=/usr/bin/google-chrome
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first to leverage Docker cache
+# Copy requirements and install dependencies
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Create logs directory
-RUN mkdir -p logs && chmod 777 logs
-
-# Copy application code
+# Copy the rest of the application code
 COPY . .
 
-# Create non-root user and adjust permissions
-RUN useradd -m appuser \
-    && chown -R appuser:appuser /app
-
-# (Optional) Set Chrome options environment variable if needed by your app
-ENV CHROME_OPTIONS="--headless --disable-gpu --no-sandbox --disable-dev-shm-usage"
-
-# Switch to non-root user
-USER appuser
-
-# Expose port
+# Expose port 8080
 EXPOSE 8080
 
-# Run with Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--timeout", "120", "server:app"]
+# Run the app using Gunicorn with the application factory
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "app:create_app()"]

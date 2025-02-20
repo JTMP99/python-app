@@ -4,5 +4,5 @@ requests==2.28.2
 beautifulsoup4==4.11.1
 selenium==4.10.0
 webdriver-manager==3.8.6
-# Optional: Whisper (if you wish to use it for transcription)
+# Optional: Uncomment if you install Whisper for transcription
 openai-whisper==20230314

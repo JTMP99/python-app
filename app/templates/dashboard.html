@@ -6,7 +6,7 @@
   <script>
     async function startCapture() {
       const streamUrl = document.getElementById('streamUrl').value;
-      const response = await fetch('/start_capture', {
+      const response = await fetch('/streams/start', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ stream_url: streamUrl })
@@ -19,10 +19,9 @@
         alert('Error: ' + data.error);
       }
     }
-
     async function stopCapture() {
       const streamId = document.getElementById('streamId').value;
-      const response = await fetch('/stop_capture', {
+      const response = await fetch('/streams/stop', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ stream_id: streamId })
@@ -34,10 +33,9 @@
         alert('Error: ' + data.error);
       }
     }
-
     async function getTranscript() {
       const streamId = document.getElementById('streamId').value;
-      const response = await fetch('/get_transcript?stream_id=' + streamId);
+      const response = await fetch('/streams/transcript?stream_id=' + streamId);
       const data = await response.json();
       if (response.ok) {
         document.getElementById('transcript').innerText = data.transcript || data.message;
@@ -45,10 +43,9 @@
         document.getElementById('transcript').innerText = 'Error fetching transcript.';
       }
     }
-
     function downloadFile() {
       const streamId = document.getElementById('streamId').value;
-      window.location.href = '/download/' + streamId;
+      window.location.href = '/streams/download/' + streamId;
     }
   </script>
 </head>
