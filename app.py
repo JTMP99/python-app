@@ -4,9 +4,11 @@ import threading
 import time
 import uuid
 import sqlite3
-from flask import Flask, request, jsonify
+import requests
+from flask import Flask, request, jsonify, render_template, send_from_directory
+from bs4 import BeautifulSoup
 
-# Try to import the Whisper library for transcription.
+# Optionally import Whisper for transcription (if installed)
 try:
     import whisper
 except ImportError:
@@ -17,7 +19,7 @@ app = Flask(__name__)
 # In-memory registry for active stream captures.
 STREAMS = {}
 
-# Database filename for legislative documents.
+# SQLite database file for legislative documents.
 DATABASE = 'legislative_documents.db'
 
 def init_db():
@@ -39,8 +41,7 @@ init_db()
 
 class StreamCapture:
     """
-    Handles capturing a live stream using FFmpeg,
-    and transcribing the captured audio using Whisper.
+    Handles capturing a live stream using FFmpeg and transcribing the captured audio using Whisper.
     """
     def __init__(self, stream_url):
         self.stream_url = stream_url
@@ -52,10 +53,7 @@ class StreamCapture:
         self.transcription_thread = None
 
     def start_capture(self):
-        """
-        Launch FFmpeg to capture the stream.
-        The command uses a direct copy codec; adjust options as needed.
-        """
+        """Launch FFmpeg to capture the stream."""
         self.capturing = True
         command = [
             "ffmpeg",
@@ -65,7 +63,7 @@ class StreamCapture:
         ]
         # Start FFmpeg as a subprocess.
         self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # Start a background thread that will transcribe the capture once finished.
+        # Start a background thread for transcription once capture ends.
         self.transcription_thread = threading.Thread(target=self.run_transcription)
         self.transcription_thread.start()
 
@@ -81,27 +79,23 @@ class StreamCapture:
 
     def run_transcription(self):
         """
-        Wait until capturing has finished and then run the transcription.
-        This is a simple approach; in a production system you might split
-        the stream into segments and transcribe continuously.
+        Wait until capturing stops then transcribe the captured file.
+        Uses Whisper if available; otherwise returns a fallback message.
         """
-        # Wait until capturing stops.
         while self.capturing:
             time.sleep(5)
-
         transcript = ""
         if whisper:
-            # Load a Whisper model (here "base" is used; you can select another size).
             model = whisper.load_model("base")
             result = model.transcribe(self.capture_file)
             transcript = result.get("text", "")
         else:
             transcript = "Transcription not available. Install Whisper for transcription."
-        
         with open(self.transcript_file, "w") as f:
             f.write(transcript)
 
-# Flask endpoint to start a new stream capture.
+# === STREAM CAPTURE ENDPOINTS ===
+
 @app.route('/start_capture', methods=['POST'])
 def start_capture():
     data = request.get_json()
@@ -117,7 +111,6 @@ def start_capture():
         "message": "Capture started"
     })
 
-# Flask endpoint to stop an active stream capture.
 @app.route('/stop_capture', methods=['POST'])
 def stop_capture():
     data = request.get_json()
@@ -132,7 +125,6 @@ def stop_capture():
         "message": "Capture stopped"
     })
 
-# Flask endpoint to retrieve the transcript for a given stream.
 @app.route('/get_transcript', methods=['GET'])
 def get_transcript():
     stream_id = request.args.get("stream_id")
@@ -150,12 +142,46 @@ def get_transcript():
         "transcript": transcript
     })
 
-# Legislative Document API Endpoints
+@app.route('/download/<stream_id>')
+def download_file(stream_id):
+    """Serve the captured media file for download."""
+    stream_capture = STREAMS.get(stream_id)
+    if stream_capture and os.path.exists(stream_capture.capture_file):
+         return send_from_directory(directory='.', path=stream_capture.capture_file, as_attachment=True)
+    return jsonify({'error': 'File not found'}), 404
+
+# === DASHBOARD & ENHANCED SCRAPING ===
+
+@app.route('/dashboard')
+def dashboard():
+    """Render the front-end dashboard for managing stream captures."""
+    return render_template('dashboard.html')
+
+@app.route('/enhanced_scrape')
+def enhanced_scrape():
+    """
+    Fetch a target URL (default is the Maine Legislature audio page),
+    parse it with BeautifulSoup, and return extracted link data.
+    """
+    url = request.args.get('url', 'https://legislature.maine.gov/audio/')
+    try:
+        response = requests.get(url)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        links = []
+        for a in soup.find_all('a', href=True):
+            links.append({
+                'text': a.get_text(strip=True),
+                'href': a['href']
+            })
+        return jsonify({'url': url, 'links': links})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# === LEGISLATIVE DOCUMENT ENDPOINTS ===
 
 @app.route('/documents', methods=['GET', 'POST'])
 def documents():
     if request.method == 'GET':
-        # Return a list of documents with basic details.
         conn = sqlite3.connect(DATABASE)
         c = conn.cursor()
         c.execute("SELECT id, title, date FROM documents")
@@ -165,7 +191,6 @@ def documents():
         return jsonify({"documents": docs_list})
     
     elif request.method == 'POST':
-        # Add a new legislative document.
         data = request.get_json()
         doc_id = data.get("id") or str(uuid.uuid4())
         title = data.get("title")
@@ -184,7 +209,6 @@ def documents():
         conn.close()
         return jsonify({"message": "Document added", "id": doc_id}), 201
 
-# Endpoint to retrieve a specific legislative document.
 @app.route('/documents/<doc_id>', methods=['GET'])
 def get_document(doc_id):
     conn = sqlite3.connect(DATABASE)
@@ -202,5 +226,5 @@ def get_document(doc_id):
     })
 
 if __name__ == '__main__':
-    # Run the Flask app on all interfaces on port 5000.
+    # For local testing, run on port 5000.
     app.run(host='0.0.0.0', port=5000)

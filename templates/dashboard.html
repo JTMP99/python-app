@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Stream Capture Dashboard</title>
+  <script>
+    async function startCapture() {
+      const streamUrl = document.getElementById('streamUrl').value;
+      const response = await fetch('/start_capture', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ stream_url: streamUrl })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        document.getElementById('status').innerText = 'Capture started with ID: ' + data.stream_id;
+        document.getElementById('streamId').value = data.stream_id;
+      } else {
+        alert('Error: ' + data.error);
+      }
+    }
+
+    async function stopCapture() {
+      const streamId = document.getElementById('streamId').value;
+      const response = await fetch('/stop_capture', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ stream_id: streamId })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        document.getElementById('status').innerText = 'Capture stopped for ID: ' + streamId;
+      } else {
+        alert('Error: ' + data.error);
+      }
+    }
+
+    async function getTranscript() {
+      const streamId = document.getElementById('streamId').value;
+      const response = await fetch('/get_transcript?stream_id=' + streamId);
+      const data = await response.json();
+      if (response.ok) {
+        document.getElementById('transcript').innerText = data.transcript || data.message;
+      } else {
+        document.getElementById('transcript').innerText = 'Error fetching transcript.';
+      }
+    }
+
+    function downloadFile() {
+      const streamId = document.getElementById('streamId').value;
+      window.location.href = '/download/' + streamId;
+    }
+  </script>
+</head>
+<body>
+  <h1>Stream Capture Dashboard</h1>
+  <div>
+    <label for="streamUrl">Stream URL:</label>
+    <input type="text" id="streamUrl" placeholder="Enter stream URL">
+    <button onclick="startCapture()">Start Capture</button>
+  </div>
+  <br>
+  <div>
+    <label for="streamId">Stream ID:</label>
+    <input type="text" id="streamId" readonly>
+    <button onclick="stopCapture()">Stop Capture</button>
+  </div>
+  <br>
+  <div>
+    <button onclick="getTranscript()">Get Transcript</button>
+  </div>
+  <br>
+  <div>
+    <p id="status"></p>
+  </div>
+  <div>
+    <h2>Transcript</h2>
+    <pre id="transcript"></pre>
+  </div>
+  <div>
+    <h2>Download Captured Media</h2>
+    <button onclick="downloadFile()">Download Media File</button>
+  </div>
+</body>
+</html>
