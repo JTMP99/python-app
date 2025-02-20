@@ -12,8 +12,9 @@ class StreamCapture:
     def __init__(self, stream_url: str):
         self.stream_url = stream_url
         self.id = str(uuid.uuid4())
-        self.capture_file = f"{self.id}.mp4"
-        self.transcript_file = f"{self.id}.txt"
+        # In capture.py, modify the file paths to use the captures directory
+        self.capture_file = f"/app/captures/{self.id}.mp4"
+        self.transcript_file = f"/app/captures/{self.id}.txt"
         self.process = None
         self.capturing = False
 

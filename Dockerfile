@@ -3,7 +3,7 @@
 ###############################
 FROM python:3.10-slim as builder
 
-# Install build tools and dependencies needed for pip installs.
+# Install build tools and dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
@@ -17,18 +17,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy only the requirements first, so this layer is cached.
+# Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies into a local directory.
+# Install CPU-only version of PyTorch first to reduce complexity
+RUN pip install --user --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+# Install other requirements
 RUN pip install --user --no-cache-dir -r requirements.txt
 
 ###############################
-# Stage 2: Final Image
+# Stage 2: Runtime
 ###############################
 FROM python:3.10-slim
 
-# Install runtime dependencies.
+# Install runtime dependencies and cleanup in one layer
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     curl \
@@ -46,29 +49,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxdamage1 \
     libxrandr2 \
     xdg-utils \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Google Chrome.
-RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
     && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update \
     && apt-get install -y google-chrome-stable \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Set environment variable for Chrome binary.
+# Set Chrome environment variable
 ENV GOOGLE_CHROME_BIN=/usr/bin/google-chrome
 
 WORKDIR /app
 
-# Copy installed Python packages from the builder stage.
+# Copy installed Python packages from builder
 COPY --from=builder /root/.local /root/.local
 ENV PATH=/root/.local/bin:$PATH
 
-# Copy the application code.
+# Copy application code
 COPY . .
 
-# Expose port 8080.
+# Create directory for storing captured files
+RUN mkdir -p /app/captures && chmod 777 /app/captures
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PORT=8080
+
+# Expose port
 EXPOSE 8080
 
-# Run the app using Gunicorn with your application factory.
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "app:create_app()"]
+# Use Gunicorn as the production server
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4", "run:app"]
