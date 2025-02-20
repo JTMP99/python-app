@@ -12,70 +12,73 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 ###############################
-# Stage 2: Python Dependencies
+# Stage 2: Core Dependencies
 ###############################
-FROM base as python-deps
+FROM base as core-deps
 
-# Copy requirements
 COPY requirements.txt .
 
-# Install basic Flask dependencies first
+# Install core Flask dependencies
 RUN pip install --no-cache-dir \
     Flask==2.2.2 \
     gunicorn==20.1.0 \
     requests==2.28.2
 
-# Install scraping dependencies
-RUN pip install --no-cache-dir \
-    beautifulsoup4==4.11.1 \
-    selenium==4.10.0 \
-    webdriver-manager==3.8.6
+###############################
+# Stage 3: Streaming Dependencies
+###############################
+FROM core-deps as streaming-deps
 
-# Install ML dependencies separately
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
-RUN pip install --no-cache-dir openai-whisper==20230314
+# Install ML dependencies
+RUN pip install --no-cache-dir \
+    openai-whisper==20230314 \
+    torch --index-url https://download.pytorch.org/whl/cpu
 
 ###############################
-# Stage 3: Final Stage
+# Stage 4: Final Stage
 ###############################
 FROM base
 
-# Copy Python packages from dependencies stage
-COPY --from=python-deps /usr/local/lib/python3.10/site-packages/ /usr/local/lib/python3.10/site-packages/
-COPY --from=python-deps /usr/local/bin/ /usr/local/bin/
+# Copy Python packages from dependencies stages
+COPY --from=streaming-deps /usr/local/lib/python3.10/site-packages/ /usr/local/lib/python3.10/site-packages/
+COPY --from=streaming-deps /usr/local/bin/ /usr/local/bin/
 
-# Set working directory
 WORKDIR /app
 
-# Copy application code
-COPY . .
+# Copy the application code
+COPY app app/
+COPY server.py .
 
-# Create captures directory
+# Create necessary directories
 RUN mkdir -p /app/captures && chmod 777 /app/captures
 
-# Set environment variables
+# Environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8080 \
     FLASK_APP=server.py \
     FLASK_ENV=production
 
-# Create start script with debugging
+# Create debug script
 RUN echo '#!/bin/bash\n\
-echo "Current directory:"\n\
-pwd\n\
-echo "Directory contents:"\n\
-ls -la\n\
-echo "Python path:"\n\
+echo "=== Directory Structure ==="\n\
+ls -R /app\n\
+echo "=== Python Path ==="\n\
 python -c "import sys; print(sys.path)"\n\
-echo "Testing imports..."\n\
+echo "=== Testing Basic Import ==="\n\
 python -c "from app import create_app; print(\"✓ App imports successfully\")"\n\
-echo "Starting application..."\n\
-exec gunicorn "server:app" --bind 0.0.0.0:$PORT --workers 1 --threads 2 --log-level debug --timeout 120\n' > /app/start.sh \
-    && chmod +x /app/start.sh
+echo "=== App Structure ==="\n\
+python -c "from app import create_app; app = create_app(); print(app.url_map)"\n\
+echo "=== Starting Application ==="\n\
+exec gunicorn --bind 0.0.0.0:$PORT \
+    --workers 1 \
+    --threads 2 \
+    --timeout 120 \
+    --log-level debug \
+    --error-logfile - \
+    --access-logfile - \
+    "server:app"' > /app/start.sh && chmod +x /app/start.sh
 
-# Expose port
 EXPOSE 8080
 
-# Start the application
 CMD ["/app/start.sh"]
