@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 def setup_chrome_options() -> Options:
     """Configure Chrome options for headless operation."""
     chrome_options = Options()
+    # If an environment variable for chrome binary is set, use it.
+    chrome_bin = os.environ.get("GOOGLE_CHROME_BIN")
+    if chrome_bin:
+        chrome_options.binary_location = chrome_bin
+
+    # Headless options and flags
     chrome_options.add_argument('--headless=new')
     chrome_options.add_argument('--no-sandbox')
     chrome_options.add_argument('--disable-dev-shm-usage')
@@ -34,7 +40,6 @@ def setup_chrome_options() -> Options:
     chrome_options.add_argument('--single-process')
     chrome_options.add_argument('--ignore-certificate-errors')
     chrome_options.add_argument('--remote-debugging-port=9222')
-    # Run as non-root user
     chrome_options.add_argument('--user-data-dir=/tmp/chrome-data')
     return chrome_options
 
@@ -78,14 +83,9 @@ def versions():
     driver = None
     try:
         options = setup_chrome_options()
-        service = Service(
-            port=9515,
-            service_args=['--no-sandbox', '--disable-gpu']
-        )
-        driver = webdriver.Chrome(
-            service=service,
-            options=options
-        )
+        # Use webdriver_manager to install and locate chromedriver
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
         
         browser_version = driver.capabilities.get('browserVersion', 'unknown')
         driver_info = driver.capabilities.get('chrome', {})
@@ -115,14 +115,8 @@ def scrape():
     driver = None
     try:
         options = setup_chrome_options()
-        service = Service(
-            port=9515,
-            service_args=['--no-sandbox', '--disable-gpu']
-        )
-        driver = webdriver.Chrome(
-            service=service,
-            options=options
-        )
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
         
         # Set page load timeout
         driver.set_page_load_timeout(30)

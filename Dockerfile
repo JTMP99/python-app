@@ -1,12 +1,23 @@
 # Use Python 3.10 slim image
 FROM python:3.10-slim
 
-# Install system dependencies
+# Install system dependencies and additional libraries required by Chrome
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
     unzip \
     gnupg2 \
+    fonts-liberation \
+    libappindicator3-1 \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libnspr4 \
+    libnss3 \
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Google Chrome
@@ -16,13 +27,8 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add
     && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
-# Install ChromeDriver
-RUN CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | awk -F'.' '{print $1}') \
-    && CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}") \
-    && wget -q --no-verbose -O /tmp/chromedriver.zip https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip \
-    && unzip /tmp/chromedriver.zip -d /usr/local/bin/ \
-    && rm /tmp/chromedriver.zip \
-    && chmod 755 /usr/local/bin/chromedriver
+# Set environment variable for Chrome binary location
+ENV GOOGLE_CHROME_BIN=/usr/bin/google-chrome
 
 # Set working directory
 WORKDIR /app
@@ -39,12 +45,11 @@ RUN mkdir -p logs && chmod 777 logs
 # Copy application code
 COPY . .
 
-# Create non-root user
+# Create non-root user and adjust permissions
 RUN useradd -m appuser \
-    && chown -R appuser:appuser /app \
-    && chown -R appuser:appuser /usr/local/bin/chromedriver
+    && chown -R appuser:appuser /app
 
-# Set Chrome flags
+# (Optional) Set Chrome options environment variable if needed by your app
 ENV CHROME_OPTIONS="--headless --disable-gpu --no-sandbox --disable-dev-shm-usage"
 
 # Switch to non-root user
