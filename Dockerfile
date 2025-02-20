@@ -47,7 +47,7 @@ WORKDIR /app
 
 # Copy the application code
 COPY app app/
-COPY server.py .
+COPY run.py .
 
 # Create necessary directories
 RUN mkdir -p /app/captures && chmod 777 /app/captures
@@ -56,7 +56,7 @@ RUN mkdir -p /app/captures && chmod 777 /app/captures
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8080 \
-    FLASK_APP=server.py \
+    FLASK_APP=run.py \
     FLASK_ENV=production
 
 # Create debug script
@@ -77,7 +77,7 @@ exec gunicorn --bind 0.0.0.0:$PORT \
     --log-level debug \
     --error-logfile - \
     --access-logfile - \
-    "server:app"' > /app/start.sh && chmod +x /app/start.sh
+    "run:app"' > /app/start.sh && chmod +x /app/start.sh
 
 EXPOSE 8080
 
