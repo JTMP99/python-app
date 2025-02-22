@@ -23,7 +23,11 @@ logging.basicConfig(
     filemode="a"
 )
 
+from threading import Lock
+
 class StreamCapture:
+    _lock = Lock()  # Class-level lock for thread safety
+    
     def __init__(self, stream_url: str):
         self.stream_url = stream_url
         self.id = str(uuid.uuid4())
@@ -58,12 +62,13 @@ class StreamCapture:
 
     def _save_metadata(self):
         """Save metadata to file"""
-        try:
-            with open(self.metadata_file, 'w') as f:
-                json.dump(self.metadata, f, indent=2, default=str)
-            logging.debug(f"Metadata saved for {self.id}")
-        except Exception as e:
-            logging.error(f"Failed to save metadata: {e}")
+        with self._lock:
+            try:
+                with open(self.metadata_file, 'w') as f:
+                    json.dump(self.metadata, f, indent=2, default=str)
+                logging.debug(f"Metadata saved for {self.id}")
+            except Exception as e:
+                logging.error(f"Failed to save metadata: {e}")
 
     def setup_selenium(self):
         """Configure Selenium WebDriver and navigate to stream page"""
@@ -100,8 +105,9 @@ class StreamCapture:
                 logging.info("Clicked play button to start the stream")
             except Exception as e:
                 logging.error(f"Play button not found or could not be clicked: {e}")
-
+            
             return True
+            
         except Exception as e:
             logging.exception("Selenium setup error")
             self._update_metadata(errors=f"Selenium setup error: {str(e)}")
