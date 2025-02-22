@@ -67,35 +67,45 @@ class StreamCapture:
 
     def setup_selenium(self):
         """Configure Selenium WebDriver and navigate to stream page"""
+    try:
+        logging.info("Initializing Selenium WebDriver...")
+
+        chrome_options = Options()
+        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.binary_location = os.getenv('GOOGLE_CHROME_BIN', '/usr/bin/chromium')
+
+        self.driver = webdriver.Chrome(options=chrome_options)
+        logging.info("Selenium WebDriver initialized successfully")
+
+        # Navigate to the stream page
+        logging.info(f"Navigating to stream URL: {self.stream_url}")
+        self.driver.get(self.stream_url)
+
+        time.sleep(10)  # Wait for elements to load
+        logging.info("Page should have loaded, checking for play button...")
+
+        # Save a screenshot to see what the browser actually loads
+        screenshot_path = "/app/logs/selenium_screenshot.png"
+        self.driver.save_screenshot(screenshot_path)
+        logging.info(f"Screenshot saved at {screenshot_path}")
+
+        # Check if Play button exists
         try:
-            chrome_options = Options()
-            chrome_options.add_argument('--headless')
-            chrome_options.add_argument('--no-sandbox')
-            chrome_options.add_argument('--disable-dev-shm-usage')
-            chrome_options.binary_location = os.getenv('GOOGLE_CHROME_BIN', '/usr/bin/chromium')
-
-            self.driver = webdriver.Chrome(options=chrome_options)
-            logging.info("Selenium WebDriver initialized successfully")
-
-            # Navigate to the stream page
-            logging.info(f"Navigating to stream URL: {self.stream_url}")
-            self.driver.get(self.stream_url)
-
-            # Wait up to 60 seconds for the play button to appear
-            try:
-                play_button = WebDriverWait(self.driver, 60).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button[aria-label='Play']"))
-                )
-                play_button.click()
-                logging.info("Clicked play button to start the stream")
-            except Exception as e:
-                logging.warning(f"Play button not found or could not be clicked: {e}")
-
-            return True
+            play_button = WebDriverWait(self.driver, 120).until(  # Increased timeout
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[aria-label='Play']"))
+            )
+            play_button.click()
+            logging.info("Clicked play button to start the stream")
         except Exception as e:
-            logging.exception("Selenium setup error")
-            self._update_metadata(errors=f"Selenium setup error: {str(e)}")
-            return False
+            logging.error(f"Play button not found or could not be clicked: {e}")
+
+        return True
+    except Exception as e:
+        logging.exception("Selenium setup error")
+        self._update_metadata(errors=f"Selenium setup error: {str(e)}")
+        return False
 
     def start_capture(self) -> None:
         """Start capturing video"""
