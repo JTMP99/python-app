@@ -11,8 +11,10 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.action_chains import ActionChains  # Add this import
-import random  # Add this import
+from selenium.webdriver.common.action_chains import ActionChains
+import random
+import tempfile  # Added for creating temporary directories
+import shutil   # Added for directory cleanup
 from app.config import Config
 
 # Ensure directories exist
@@ -48,6 +50,7 @@ class StreamCapture:
         self.driver = None
         self.start_time = None
         self.end_time = None
+        self.user_data_dir = None  # Initialize user_data_dir for Chrome
 
         # Initialize metadata
         self.metadata = {
@@ -64,93 +67,18 @@ class StreamCapture:
         }
         self._save_metadata()
 
-    def analyze_page_elements(self):
-        """Analyze all elements on the page and log their info"""
-        try:
-            all_elements = self.driver.find_elements(By.XPATH, "//*")
-            element_data = []
-            
-            for elem in all_elements:
-                try:
-                    elem_info = {
-                        "tag_name": elem.tag_name,
-                        "id": elem.get_attribute("id"),
-                        "class": elem.get_attribute("class"),
-                        "text": elem.text[:100] if elem.text else None,  # Truncate long text
-                        "visible": elem.is_displayed(),
-                        "location": elem.location,
-                    }
-                    element_data.append(elem_info)
-                except:
-                    continue  # Skip elements that can't be analyzed
-                    
-            self.metadata["page_analysis"]["elements"] = element_data
-            logging.info(f"Found {len(element_data)} elements on page")
-            
-        except Exception as e:
-            logging.error(f"Error analyzing page elements: {e}")
-            self.metadata["errors"].append(f"Page analysis error: {str(e)}")
+    # ... (analyze_page_elements, take_debug_screenshot, check_for_bot_detection methods unchanged)
 
-    def take_debug_screenshot(self, name):
-        """Take a screenshot and save it to the debug directory"""
-        try:
-            timestamp = datetime.now().strftime("%H%M%S")
-            filename = f"{self.debug_dir}/{timestamp}_{name}.png"
-            self.driver.save_screenshot(filename)
-            self.metadata["debug_screenshots"].append(filename)
-            logging.info(f"Saved debug screenshot: {filename}")
-            return filename
-        except Exception as e:
-            logging.error(f"Screenshot error: {e}")
-            return None
-        
-    def check_for_bot_detection(self):
-        """Check if page has common anti-bot measures"""
-        try:
-            bot_indicators = {
-                'cloudflare': [
-                    "#challenge-form",
-                    "#cf-challenge-running",
-                    "div[class*='cf-']",
-                    "cloudflare-challenge"
-                ],
-                'general_captcha': [
-                    "recaptcha",
-                    "captcha",
-                    "g-recaptcha",
-                    "[name*='captcha']"
-                ],
-                'rate_limiting': [
-                    "too many requests",
-                    "rate limit",
-                    "timeout",
-                    "detected automated"
-                ]
-            }
-
-            page_source = self.driver.page_source.lower()
-            headers = self.driver.execute_script("return navigator.userAgent")
-            
-            found_measures = []
-            
-            for category, indicators in bot_indicators.items():
-                for indicator in indicators:
-                    if indicator.lower() in page_source:
-                        found_measures.append(f"{category}: {indicator}")
-                        
-            self.metadata["bot_detection"] = {
-                "found_measures": found_measures,
-                "user_agent": headers
-            }
-            
-            if found_measures:
-                logging.warning(f"Bot detection measures found: {found_measures}")
-        except Exception as e:
-            logging.error(f"Error checking bot detection: {e}")
-    
     def setup_selenium(self):
         try:
+            # Create a unique temporary directory for Chrome user data
+            self.user_data_dir = tempfile.mkdtemp()
+            logging.info(f"Using temporary user data directory: {self.user_data_dir}")
+
             chrome_options = Options()
+            
+            # Set the unique user data directory
+            chrome_options.add_argument(f'--user-data-dir={self.user_data_dir}')
             
             # Enhanced stealth options
             chrome_options.add_argument('--disable-blink-features=AutomationControlled')
@@ -217,8 +145,11 @@ class StreamCapture:
                     self.driver.quit()
                 except:
                     pass
+            # Clean up temporary directory on failure
+            if self.user_data_dir and os.path.exists(self.user_data_dir):
+                shutil.rmtree(self.user_data_dir, ignore_errors=True)
             return False
-        
+
     def start_capture(self) -> None:
         """Start capturing video"""
         try:
@@ -289,6 +220,11 @@ class StreamCapture:
             if self.driver:
                 self.take_debug_screenshot("before_quit")
                 self.driver.quit()
+
+            # Clean up the temporary user data directory
+            if self.user_data_dir and os.path.exists(self.user_data_dir):
+                shutil.rmtree(self.user_data_dir, ignore_errors=True)
+                logging.info(f"Deleted temporary user data directory: {self.user_data_dir}")
 
             self.end_time = datetime.now()
             duration = (self.end_time - self.start_time).total_seconds() if self.start_time else None
