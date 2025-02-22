@@ -9,13 +9,12 @@ class Config:
     
     # Logging configuration
     LOG_DIR = "/app/logs"
+    os.makedirs(LOG_DIR, exist_ok=True)  # Ensure logs directory exists
+
     LOG_FILE = f"{LOG_DIR}/app.log"
     LOG_LEVEL = logging.DEBUG  # Change to logging.INFO in production
 
-    # Ensure logs directory exists
-    os.makedirs(LOG_DIR, exist_ok=True)
-
-    # Set up logging format
+    # Set up logging
     logging.basicConfig(
         filename=LOG_FILE,
         level=LOG_LEVEL,
