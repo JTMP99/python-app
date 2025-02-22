@@ -1,82 +1,201 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <title>Stream Capture Dashboard</title>
-  <script>
-    async function startCapture() {
-      const streamUrl = document.getElementById('streamUrl').value;
-      const response = await fetch('/streams/start', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ stream_url: streamUrl })
-      });
-      const data = await response.json();
-      if (response.ok) {
-        document.getElementById('status').innerText = 'Capture started with ID: ' + data.stream_id;
-        document.getElementById('streamId').value = data.stream_id;
-      } else {
-        alert('Error: ' + data.error);
-      }
-    }
-    async function stopCapture() {
-      const streamId = document.getElementById('streamId').value;
-      const response = await fetch('/streams/stop', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ stream_id: streamId })
-      });
-      const data = await response.json();
-      if (response.ok) {
-        document.getElementById('status').innerText = 'Capture stopped for ID: ' + streamId;
-      } else {
-        alert('Error: ' + data.error);
-      }
-    }
-    async function getTranscript() {
-      const streamId = document.getElementById('streamId').value;
-      const response = await fetch('/streams/transcript?stream_id=' + streamId);
-      const data = await response.json();
-      if (response.ok) {
-        document.getElementById('transcript').innerText = data.transcript || data.message;
-      } else {
-        document.getElementById('transcript').innerText = 'Error fetching transcript.';
-      }
-    }
-    function downloadFile() {
-      const streamId = document.getElementById('streamId').value;
-      window.location.href = '/streams/download/' + streamId;
-    }
-  </script>
+    <title>Stream Capture Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-  <h1>Stream Capture Dashboard</h1>
-  <div>
-    <label for="streamUrl">Stream URL:</label>
-    <input type="text" id="streamUrl" placeholder="Enter stream URL">
-    <button onclick="startCapture()">Start Capture</button>
-  </div>
-  <br>
-  <div>
-    <label for="streamId">Stream ID:</label>
-    <input type="text" id="streamId" readonly>
-    <button onclick="stopCapture()">Stop Capture</button>
-  </div>
-  <br>
-  <div>
-    <button onclick="getTranscript()">Get Transcript</button>
-  </div>
-  <br>
-  <div>
-    <p id="status"></p>
-  </div>
-  <div>
-    <h2>Transcript</h2>
-    <pre id="transcript"></pre>
-  </div>
-  <div>
-    <h2>Download Captured Media</h2>
-    <button onclick="downloadFile()">Download Media File</button>
-  </div>
+<body class="bg-gray-100">
+    <div class="container mx-auto p-4">
+        <h1 class="text-2xl font-bold mb-4">Stream Capture Dashboard</h1>
+
+        <!-- Start Capture Form -->
+        <div class="bg-white rounded-lg shadow p-4 mb-4">
+            <h2 class="text-xl font-semibold mb-2">Start New Capture</h2>
+            <form id="captureForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Stream URL</label>
+                    <input type="text" id="streamUrl" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required>
+                </div>
+                <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Start Capture</button>
+            </form>
+        </div>
+
+        <!-- Active Captures -->
+        <div class="bg-white rounded-lg shadow p-4 mb-4">
+            <h2 class="text-xl font-semibold mb-2">Active Captures</h2>
+            <div id="activeCaptures" class="space-y-4"></div>
+        </div>
+
+        <!-- Capture Details Template (Hidden) -->
+        <template id="captureTemplate">
+            <div class="border rounded-lg p-4 space-y-4 capture-item">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="font-semibold">Stream URL: <span class="stream-url"></span></h3>
+                        <p>ID: <span class="capture-id"></span></p>
+                        <p>Status: <span class="status"></span></p>
+                        <p>Duration: <span class="duration"></span></p>
+                    </div>
+                    <button class="stop-capture bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600">Stop</button>
+                </div>
+
+                <!-- Debug Info -->
+                <div class="debug-info mt-4">
+                    <h4 class="font-semibold mb-2">Debug Information</h4>
+                    
+                    <!-- Screenshots -->
+                    <div class="screenshot-gallery grid grid-cols-2 gap-4 mb-4">
+                        <!-- Screenshots will be inserted here -->
+                    </div>
+
+                    <!-- Page Analysis -->
+                    <div class="page-analysis">
+                        <h5 class="font-semibold">Page Elements Found:</h5>
+                        <pre class="bg-gray-100 p-2 rounded mt-1 text-sm elements-found"></pre>
+                        
+                        <h5 class="font-semibold mt-2">Video Elements:</h5>
+                        <pre class="bg-gray-100 p-2 rounded mt-1 text-sm video-elements"></pre>
+                    </div>
+
+                    <!-- Errors -->
+                    <div class="errors mt-4">
+                        <h5 class="font-semibold text-red-600">Errors:</h5>
+                        <pre class="bg-red-50 p-2 rounded mt-1 text-sm error-list"></pre>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <script>
+        let activeStreams = new Set();
+
+        // Start a new capture
+        document.getElementById('captureForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const streamUrl = document.getElementById('streamUrl').value;
+            
+            try {
+                const response = await fetch('/streams/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ stream_url: streamUrl })
+                });
+                
+                const data = await response.json();
+                if (!activeStreams.has(data.id)) {
+                    activeStreams.add(data.id);
+                    createCaptureElement(data);
+                    pollCaptureStatus(data.id);
+                }
+            } catch (error) {
+                console.error('Error starting capture:', error);
+            }
+        });
+
+        // Create new capture element
+        function createCaptureElement(data) {
+            const template = document.getElementById('captureTemplate');
+            const clone = template.content.cloneNode(true);
+            
+            // Set initial data
+            clone.querySelector('.stream-url').textContent = data.stream_url;
+            clone.querySelector('.capture-id').textContent = data.id;
+            clone.querySelector('.status').textContent = data.status;
+            clone.querySelector('.duration').textContent = data.duration || 'In progress';
+            
+            // Add stop button handler
+            const stopBtn = clone.querySelector('.stop-capture');
+            stopBtn.addEventListener('click', () => stopCapture(data.id));
+            
+            // Add to active captures
+            const container = document.getElementById('activeCaptures');
+            const captureDiv = document.createElement('div');
+            captureDiv.setAttribute('data-capture-id', data.id);
+            captureDiv.appendChild(clone);
+            container.insertBefore(captureDiv, container.firstChild);
+        }
+
+        // Update capture element with new data
+        function updateCaptureElement(data) {
+            const captureDiv = document.querySelector(`[data-capture-id="${data.id}"]`);
+            if (!captureDiv) return;
+
+            // Update basic info
+            captureDiv.querySelector('.status').textContent = data.status;
+            captureDiv.querySelector('.duration').textContent = data.duration || 'In progress';
+
+            // Update screenshots
+            const gallery = captureDiv.querySelector('.screenshot-gallery');
+            gallery.innerHTML = ''; // Clear existing
+            
+            if (data.debug_screenshots && data.debug_screenshots.length > 0) {
+                data.debug_screenshots.forEach(screenshot => {
+                    // Extract timestamp from filename
+                    const timestamp = screenshot.split('/').pop().split('_')[0];
+                    const img = document.createElement('div');
+                    img.className = 'screenshot-container';
+                    img.innerHTML = `
+                        <p class="text-sm font-medium mb-1">Screenshot at ${timestamp}</p>
+                        <img src="/streams/debug/${data.id}/screenshots/${timestamp}" 
+                             class="w-full h-auto rounded shadow" 
+                             alt="Screenshot ${timestamp}">
+                    `;
+                    gallery.appendChild(img);
+                });
+            }
+
+            // Update page analysis
+            if (data.page_analysis) {
+                const elementsPre = captureDiv.querySelector('.elements-found');
+                elementsPre.textContent = JSON.stringify(data.page_analysis.elements || [], null, 2);
+
+                const videoPre = captureDiv.querySelector('.video-elements');
+                videoPre.textContent = JSON.stringify(data.page_analysis.video_elements || [], null, 2);
+            }
+
+            // Update errors
+            const errorsPre = captureDiv.querySelector('.error-list');
+            errorsPre.textContent = data.errors.length ? 
+                JSON.stringify(data.errors, null, 2) : 
+                'No errors reported';
+        }
+
+        // Poll for status updates
+        async function pollCaptureStatus(id) {
+            try {
+                const response = await fetch(`/streams/debug/${id}`);
+                const data = await response.json();
+                
+                updateCaptureElement(data);
+                
+                // Continue polling if not completed
+                if (data.status !== 'completed' && activeStreams.has(id)) {
+                    setTimeout(() => pollCaptureStatus(id), 2000);
+                } else {
+                    activeStreams.delete(id);
+                }
+            } catch (error) {
+                console.error('Error polling status:', error);
+            }
+        }
+
+        // Stop capture
+        async function stopCapture(id) {
+            try {
+                const response = await fetch('/streams/stop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ stream_id: id })
+                });
+                
+                const data = await response.json();
+                updateCaptureElement(data);
+                activeStreams.delete(id);
+            } catch (error) {
+                console.error('Error stopping capture:', error);
+            }
+        }
+    </script>
 </body>
 </html>

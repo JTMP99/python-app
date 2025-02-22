@@ -1,4 +1,4 @@
-from flask import request, jsonify, send_from_directory, current_app
+from flask import request, jsonify, send_from_directory, current_app, send_file
 from . import streaming_bp
 from .capture import StreamCapture
 import os
@@ -75,6 +75,59 @@ def get_status(stream_id):
         
     except Exception as e:
         current_app.logger.exception("Error in get_status route")
+        return jsonify({"error": str(e)}), 500
+
+@streaming_bp.route("/debug/<stream_id>")
+def get_debug_info(stream_id):
+    """Get comprehensive debug information for a capture"""
+    try:
+        if stream_id not in STREAMS:
+            return jsonify({"error": "Stream not found"}), 404
+            
+        stream_capture = STREAMS[stream_id]
+        metadata = stream_capture.get_status()
+        
+        # Extract just the debug-relevant information
+        debug_info = {
+            "id": stream_id,
+            "stream_url": metadata["stream_url"],
+            "status": metadata["status"],
+            "duration": metadata["duration"],
+            "errors": metadata["errors"],
+            "page_analysis": metadata.get("page_analysis", {}),
+            "screenshots": metadata.get("debug_screenshots", []),
+            "start_time": metadata["start_time"],
+            "end_time": metadata["end_time"]
+        }
+        
+        return jsonify(debug_info)
+        
+    except Exception as e:
+        current_app.logger.exception("Error getting debug info")
+        return jsonify({"error": str(e)}), 500
+
+@streaming_bp.route("/debug/<stream_id>/screenshots/<timestamp>")
+def get_screenshot(stream_id, timestamp):
+    """Retrieve a specific debug screenshot"""
+    try:
+        if stream_id not in STREAMS:
+            return jsonify({"error": "Stream not found"}), 404
+            
+        stream_capture = STREAMS[stream_id]
+        debug_dir = f"/app/captures/{stream_id}/debug"
+        
+        # Find the matching screenshot
+        for filename in os.listdir(debug_dir):
+            if timestamp in filename and filename.endswith('.png'):
+                return send_file(
+                    os.path.join(debug_dir, filename),
+                    mimetype='image/png'
+                )
+                
+        return jsonify({"error": "Screenshot not found"}), 404
+        
+    except Exception as e:
+        current_app.logger.exception("Error getting screenshot")
         return jsonify({"error": str(e)}), 500
 
 @streaming_bp.route("/download/<stream_id>")
