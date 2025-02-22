@@ -14,6 +14,10 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.remote.webdriver import WebElement
 from app.config import Config
 
+# Ensure directories exist
+os.makedirs("/app/logs", exist_ok=True)
+os.makedirs("/app/captures", exist_ok=True)
+
 # Configure logging using Config class
 LOG_FILE = Config.LOG_FILE
 
@@ -109,8 +113,10 @@ class StreamCapture:
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
             chrome_options.add_argument('--window-size=1920,1080')
+            chrome_options.add_argument('--disable-gpu')  # Added for headless stability
             chrome_options.binary_location = os.getenv('GOOGLE_CHROME_BIN', '/usr/bin/chromium')
 
+            logging.debug("Chrome options configured, creating WebDriver...")
             self.driver = webdriver.Chrome(options=chrome_options)
             logging.info("Selenium WebDriver initialized successfully")
 
@@ -131,7 +137,9 @@ class StreamCapture:
                 ".video-player",
                 "[aria-label*='video']",
                 "[aria-label*='player']",
-                "button[aria-label='Play']"
+                "button[aria-label='Play']",
+                ".ytp-play-button",  # YouTube
+                ".vjs-play-control"  # VideoJS
             ]
             
             found_elements = []
@@ -144,38 +152,71 @@ class StreamCapture:
                             "count": len(elems),
                             "visible": any(e.is_displayed() for e in elems)
                         })
-                except:
+                except Exception as e:
+                    logging.error(f"Error checking selector {selector}: {e}")
                     continue
 
             self.metadata["page_analysis"]["video_elements"] = found_elements
             
+            # Take another screenshot before attempting to click play
+            self.take_debug_screenshot("before_play_attempt")
+            
             # Look for and try to click play button with longer timeout
             try:
-                play_button = WebDriverWait(self.driver, 60).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button[aria-label='Play']"))
-                )
-                play_button.click()
-                logging.info("Clicked play button")
-                self.take_debug_screenshot("after_play_click")
+                # Try multiple selectors for play button
+                play_selectors = [
+                    "button[aria-label='Play']",
+                    ".ytp-play-button",
+                    ".vjs-play-control",
+                    "[aria-label*='Play']",
+                    "[title*='Play']"
+                ]
+                
+                for selector in play_selectors:
+                    try:
+                        play_button = WebDriverWait(self.driver, 10).until(
+                            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                        )
+                        play_button.click()
+                        logging.info(f"Clicked play button with selector: {selector}")
+                        self.take_debug_screenshot("after_play_click")
+                        break
+                    except:
+                        continue
+                        
             except Exception as e:
                 logging.error(f"Play button not found or couldn't be clicked: {e}")
                 self.metadata["errors"].append(f"Play button error: {str(e)}")
+                # Continue anyway - some streams might autoplay
 
+            # Final pre-capture screenshot
+            self.take_debug_screenshot("pre_capture")
             return True
 
         except Exception as e:
             logging.exception("Selenium setup error")
             self.metadata["errors"].append(f"Selenium setup error: {str(e)}")
+            if self.driver:
+                try:
+                    self.driver.quit()
+                except:
+                    pass
             return False
 
     def start_capture(self) -> None:
         """Start capturing video"""
         try:
             if not self.setup_selenium():
+                self.metadata["status"] = "failed"
+                self._save_metadata()
                 return
 
             self.start_time = datetime.now()
             self.capturing = True
+            self.metadata["status"] = "capturing"
+            self.metadata["start_time"] = self.start_time
+            self._save_metadata()
+            
             logging.info(f"Capture started for {self.stream_url}")
 
             # Start FFmpeg process
@@ -199,13 +240,24 @@ class StreamCapture:
                 if self.process.poll() is not None:
                     break
                 time.sleep(1)
+                self._update_metadata(duration=int(time.time() - start_wait))
                 
             # Take final screenshot
             self.take_debug_screenshot("final_state")
+            
+            # Check process output
+            if self.process.poll() is not None:
+                stdout, stderr = self.process.communicate()
+                logging.debug(f"FFmpeg stdout: {stdout.decode() if stdout else ''}")
+                if stderr:
+                    logging.error(f"FFmpeg stderr: {stderr.decode()}")
+                    self.metadata["errors"].append(f"FFmpeg error: {stderr.decode()}")
 
         except Exception as e:
             logging.exception("Error during stream capture")
             self.metadata["errors"].append(f"Capture error: {str(e)}")
+            self.metadata["status"] = "failed"
+            self._save_metadata()
             self.stop_capture()
 
     def stop_capture(self) -> None:
@@ -213,19 +265,30 @@ class StreamCapture:
         try:
             if self.process:
                 self.process.terminate()
-                self.process.wait(timeout=10)
+                try:
+                    self.process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    
             if self.driver:
                 self.take_debug_screenshot("before_quit")
                 self.driver.quit()
 
             self.end_time = datetime.now()
             duration = (self.end_time - self.start_time).total_seconds() if self.start_time else None
-            self._update_metadata(status="completed", end_time=self.end_time, duration=duration)
+            
+            self.metadata["status"] = "completed"
+            self.metadata["end_time"] = self.end_time
+            self.metadata["duration"] = duration
+            self._save_metadata()
+            
             logging.info(f"Capture stopped for {self.stream_url}, duration: {duration} seconds")
 
         except Exception as e:
             logging.exception("Error stopping capture")
             self.metadata["errors"].append(f"Stop error: {str(e)}")
+            self.metadata["status"] = "failed"
+            self._save_metadata()
 
     def _save_metadata(self):
         """Save metadata to file"""
