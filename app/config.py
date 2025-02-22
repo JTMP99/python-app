@@ -8,11 +8,12 @@ class Config:
     GOOGLE_CHROME_BIN = os.getenv("GOOGLE_CHROME_BIN", "/usr/bin/google-chrome")
     
     # Logging configuration
-    LOG_FILE = "/app/logs/app.log"
+    LOG_DIR = "/app/logs"
+    LOG_FILE = f"{LOG_DIR}/app.log"
     LOG_LEVEL = logging.DEBUG  # Change to logging.INFO in production
 
     # Ensure logs directory exists
-    os.makedirs("/app/logs", exist_ok=True)
+    os.makedirs(LOG_DIR, exist_ok=True)
 
     # Set up logging format
     logging.basicConfig(
