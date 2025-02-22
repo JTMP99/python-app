@@ -1,7 +1,23 @@
 import os
+import logging
 
 class Config:
     DEBUG = os.getenv("DEBUG", False)
     SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")
     DATABASE_URI = os.getenv("DATABASE_URI", "sqlite:///legislative_documents.db")
     GOOGLE_CHROME_BIN = os.getenv("GOOGLE_CHROME_BIN", "/usr/bin/google-chrome")
+    
+    # Logging configuration
+    LOG_FILE = "/app/logs/app.log"
+    LOG_LEVEL = logging.DEBUG  # Change to logging.INFO in production
+
+    # Ensure logs directory exists
+    os.makedirs("/app/logs", exist_ok=True)
+
+    # Set up logging format
+    logging.basicConfig(
+        filename=LOG_FILE,
+        level=LOG_LEVEL,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        filemode="a"
+    )

@@ -4,9 +4,22 @@ import time
 import uuid
 import json
 import os
+import logging
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from app.config import LOG_FILE
+
+# Configure logging to write to a file
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.DEBUG,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    filemode="a"
+)
 
 class StreamCapture:
     def __init__(self, stream_url: str):
@@ -19,7 +32,6 @@ class StreamCapture:
         
         # File paths
         self.video_file = f"{self.capture_dir}/video.mp4"
-        self.audio_file = f"{self.capture_dir}/audio.wav"
         self.metadata_file = f"{self.capture_dir}/metadata.json"
         
         # Capture state
@@ -38,124 +50,99 @@ class StreamCapture:
             "duration": None,
             "status": "initialized",
             "video_path": self.video_file,
-            "audio_path": self.audio_file,
             "errors": []
         }
         self._save_metadata()
 
     def _save_metadata(self):
-        """Save current metadata to file"""
-        with open(self.metadata_file, 'w') as f:
-            json.dump(self.metadata, f, indent=2, default=str)
-
-    def _update_metadata(self, **kwargs):
-        """Update metadata with new values"""
-        self.metadata.update(kwargs)
-        self._save_metadata()
+        """Save metadata to file"""
+        try:
+            with open(self.metadata_file, 'w') as f:
+                json.dump(self.metadata, f, indent=2, default=str)
+            logging.debug(f"Metadata saved for {self.id}")
+        except Exception as e:
+            logging.error(f"Failed to save metadata: {e}")
 
     def setup_selenium(self):
-        """Configure and start Selenium WebDriver"""
+        """Configure Selenium WebDriver and navigate to stream page"""
         try:
             chrome_options = Options()
             chrome_options.add_argument('--headless')
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
-            chrome_options.add_argument('--start-maximized')
-            chrome_options.add_argument('--autoplay-policy=no-user-gesture-required')
             chrome_options.binary_location = os.getenv('GOOGLE_CHROME_BIN', '/usr/bin/chromium')
             
             self.driver = webdriver.Chrome(options=chrome_options)
+            logging.info("Selenium WebDriver initialized successfully")
+
+            # Navigate to the stream page
+            logging.info(f"Navigating to stream URL: {self.stream_url}")
+            self.driver.get(self.stream_url)
+
+            # Wait up to 60 seconds for the play button to appear
+            try:
+                play_button = WebDriverWait(self.driver, 60).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button[aria-label='Play']"))
+                )
+                play_button.click()
+                logging.info("Clicked play button to start the stream")
+            except Exception as e:
+                logging.warning(f"Play button not found or could not be clicked: {e}")
+
             return True
         except Exception as e:
-            self._update_metadata(
-                status="error",
-                errors=self.metadata["errors"] + [f"Selenium setup error: {str(e)}"]
-            )
+            logging.exception("Selenium setup error")
+            self._update_metadata(errors=f"Selenium setup error: {str(e)}")
             return False
 
     def start_capture(self) -> None:
-        """Start capturing video and audio"""
+        """Start capturing video"""
         try:
             if not self.setup_selenium():
                 return
             
             self.start_time = datetime.now()
             self.capturing = True
+            logging.info(f"Capture started for {self.stream_url}")
             
-            # Update metadata
-            self._update_metadata(
-                status="recording",
-                start_time=self.start_time
-            )
-            
-            # Navigate to stream
-            self.driver.get(self.stream_url)
-            time.sleep(5)  # Wait for stream to load
-            
-            # Start FFmpeg to capture both screen and audio
+            # Start FFmpeg process
             command = [
                 "ffmpeg",
-                "-f", "x11grab",  # Screen capture
-                "-video_size", "1920x1080",  # Adjust as needed
+                "-f", "x11grab",
+                "-video_size", "1920x1080",
                 "-i", os.getenv("DISPLAY", ":99"),
-                "-f", "alsa",  # Audio capture
-                "-i", "default",
                 "-c:v", "libx264",
-                "-c:a", "aac",
-                "-strict", "experimental",
+                "-preset", "ultrafast",
+                "-t", "60",  # Limit to 60 seconds for testing
                 self.video_file
             ]
             
-            self.process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            
+            logging.debug(f"Running FFmpeg command: {' '.join(command)}")
+            self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
         except Exception as e:
-            self._update_metadata(
-                status="error",
-                errors=self.metadata["errors"] + [f"Capture start error: {str(e)}"]
-            )
+            logging.exception("Error during stream capture")
+            self._update_metadata(errors=f"Capture start error: {str(e)}")
             self.stop_capture()
 
     def stop_capture(self) -> None:
-        """Stop capturing and cleanup"""
+        """Stop capturing"""
         try:
-            self.capturing = False
-            self.end_time = datetime.now()
-            
-            # Stop FFmpeg process
             if self.process:
                 self.process.terminate()
-                try:
-                    self.process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    self.process.kill()
-            
-            # Close Selenium
+                self.process.wait(timeout=10)
             if self.driver:
                 self.driver.quit()
             
-            # Calculate duration
-            if self.start_time and self.end_time:
-                duration = (self.end_time - self.start_time).total_seconds()
-            else:
-                duration = None
-            
-            # Update final metadata
-            self._update_metadata(
-                status="completed",
-                end_time=self.end_time,
-                duration=duration
-            )
-            
+            self.end_time = datetime.now()
+            duration = (self.end_time - self.start_time).total_seconds() if self.start_time else None
+            self._update_metadata(status="completed", end_time=self.end_time, duration=duration)
+            logging.info(f"Capture stopped for {self.stream_url}, duration: {duration} seconds")
+
         except Exception as e:
-            self._update_metadata(
-                status="error",
-                errors=self.metadata["errors"] + [f"Capture stop error: {str(e)}"]
-            )
+            logging.exception("Error stopping capture")
+            self._update_metadata(errors=f"Capture stop error: {str(e)}")
 
     def get_status(self) -> dict:
-        """Get current capture status and metadata"""
+        """Get capture status"""
         return self.metadata
