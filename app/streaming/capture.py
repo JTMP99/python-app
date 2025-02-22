@@ -11,10 +11,11 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from app.config import Config
+from app.config import Config  
+
+# Configure logging using Config class
 LOG_FILE = Config.LOG_FILE
 
-# Configure logging
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.DEBUG,
@@ -27,7 +28,7 @@ class StreamCapture:
         self.stream_url = stream_url
         self.id = str(uuid.uuid4())
 
-        # Setup capture directory
+        # Setup directory structure
         self.capture_dir = f"/app/captures/{self.id}"
         os.makedirs(self.capture_dir, exist_ok=True)
 
@@ -42,7 +43,7 @@ class StreamCapture:
         self.start_time = None
         self.end_time = None
 
-        # Metadata initialization
+        # Initialize metadata
         self.metadata = {
             "id": self.id,
             "stream_url": stream_url,
@@ -65,22 +66,22 @@ class StreamCapture:
             logging.error(f"Failed to save metadata: {e}")
 
     def setup_selenium(self):
-        """Initialize Selenium WebDriver and load the stream page"""
+        """Configure Selenium WebDriver and navigate to stream page"""
         try:
             chrome_options = Options()
             chrome_options.add_argument('--headless')
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
-            chrome_options.binary_location = os.getenv('GOOGLE_CHROME_BIN', '/usr/bin/chromium')
+            chrome_options.binary_location = Config.GOOGLE_CHROME_BIN
 
             self.driver = webdriver.Chrome(options=chrome_options)
             logging.info("Selenium WebDriver initialized successfully")
 
-            # Navigate to stream
+            # Navigate to the stream page
             logging.info(f"Navigating to stream URL: {self.stream_url}")
             self.driver.get(self.stream_url)
 
-            # Wait for the play button and click it
+            # Wait up to 60 seconds for the play button to appear
             try:
                 play_button = WebDriverWait(self.driver, 60).until(
                     EC.element_to_be_clickable((By.CSS_SELECTOR, "button[aria-label='Play']"))
@@ -97,7 +98,7 @@ class StreamCapture:
             return False
 
     def start_capture(self) -> None:
-        """Start video recording with FFmpeg"""
+        """Start capturing video"""
         try:
             if not self.setup_selenium():
                 return
@@ -106,10 +107,7 @@ class StreamCapture:
             self.capturing = True
             logging.info(f"Capture started for {self.stream_url}")
 
-            # Ensure the directory exists before running FFmpeg
-            os.makedirs(self.capture_dir, exist_ok=True)
-
-            # FFmpeg capture command
+            # Start FFmpeg process
             command = [
                 "ffmpeg",
                 "-f", "x11grab",
@@ -117,7 +115,7 @@ class StreamCapture:
                 "-i", os.getenv("DISPLAY", ":99"),
                 "-c:v", "libx264",
                 "-preset", "ultrafast",
-                "-t", "60",
+                "-t", "60",  # Limit to 60 seconds for testing
                 self.video_file
             ]
 
@@ -130,12 +128,11 @@ class StreamCapture:
             self.stop_capture()
 
     def stop_capture(self) -> None:
-        """Stop video capture"""
+        """Stop capturing"""
         try:
             if self.process:
                 self.process.terminate()
                 self.process.wait(timeout=10)
-
             if self.driver:
                 self.driver.quit()
 
@@ -149,5 +146,5 @@ class StreamCapture:
             self._update_metadata(errors=f"Capture stop error: {str(e)}")
 
     def get_status(self) -> dict:
-        """Retrieve capture status"""
+        """Get capture status"""
         return self.metadata
