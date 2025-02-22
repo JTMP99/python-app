@@ -97,7 +97,7 @@ class StreamCapture:
                 "ffmpeg",
                 "-f", "x11grab",  # Screen capture
                 "-video_size", "1920x1080",  # Adjust as needed
-                "-i", os.getenv("DISPLAY", ":0.0"),
+                "-i", os.getenv("DISPLAY", ":99"),
                 "-f", "alsa",  # Audio capture
                 "-i", "default",
                 "-c:v", "libx264",

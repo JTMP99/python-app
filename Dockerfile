@@ -1,9 +1,15 @@
 FROM python:3.10-slim
 
-# Install minimal dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     wget \
+    xvfb \
+    x11-apps \
+    alsa-utils \
+    pulseaudio \
+    libnss3 \
+    libgconf-2-4 \
     chromium \
     chromium-driver \
     && rm -rf /var/lib/apt/lists/*
@@ -29,8 +35,12 @@ ENV PYTHONUNBUFFERED=1 \
     FLASK_APP=run.py \
     FLASK_DEBUG=0 \
     GOOGLE_CHROME_BIN=/usr/bin/chromium \
+    DISPLAY=:99 \
     DEBUG=False \
     SECRET_KEY="your-secret-key-change-in-production"
+
+# Start Xvfb virtual display
+RUN Xvfb :99 -screen 0 1920x1080x24 &
 
 EXPOSE 8080
 
