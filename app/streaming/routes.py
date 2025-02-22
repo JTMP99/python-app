@@ -12,10 +12,13 @@ def start_capture():
     stream_url = data.get("stream_url")
     if not stream_url:
         return jsonify({"error": "stream_url parameter is required"}), 400
+    
     stream_capture = StreamCapture(stream_url)
     STREAMS[stream_capture.id] = stream_capture
     stream_capture.start_capture()
-    return jsonify({"stream_id": stream_capture.id, "message": "Capture started"})
+    
+    # Now we can return more detailed status info
+    return jsonify(stream_capture.get_status())
 
 @streaming_bp.route("/stop", methods=["POST"])
 def stop_capture():
@@ -23,25 +26,36 @@ def stop_capture():
     stream_id = data.get("stream_id")
     if not stream_id or stream_id not in STREAMS:
         return jsonify({"error": "Valid stream_id is required"}), 400
+    
     stream_capture = STREAMS[stream_id]
     stream_capture.stop_capture()
-    return jsonify({"stream_id": stream_id, "message": "Capture stopped"})
+    
+    # Return final status after stopping
+    return jsonify(stream_capture.get_status())
 
-@streaming_bp.route("/transcript", methods=["GET"])
-def get_transcript():
-    stream_id = request.args.get("stream_id")
-    if not stream_id or stream_id not in STREAMS:
-        return jsonify({"error": "Valid stream_id is required"}), 400
+@streaming_bp.route("/status/<stream_id>", methods=["GET"])
+def get_status(stream_id):
+    if stream_id not in STREAMS:
+        return jsonify({"error": "Stream not found"}), 404
+    
     stream_capture = STREAMS[stream_id]
-    if not os.path.exists(stream_capture.transcript_file):
-        return jsonify({"message": "Transcript not available yet"}), 202
-    with open(stream_capture.transcript_file, "r") as f:
-        transcript = f.read()
-    return jsonify({"stream_id": stream_id, "transcript": transcript})
+    return jsonify(stream_capture.get_status())
 
 @streaming_bp.route("/download/<stream_id>")
 def download(stream_id):
-    stream_capture = STREAMS.get(stream_id)
-    if stream_capture and os.path.exists(stream_capture.capture_file):
-        return send_from_directory(directory=current_app.root_path, path=stream_capture.capture_file, as_attachment=True)
+    if stream_id not in STREAMS:
+        return jsonify({"error": "Stream not found"}), 404
+    
+    stream_capture = STREAMS[stream_id]
+    metadata = stream_capture.get_status()
+    
+    if metadata["status"] != "completed":
+        return jsonify({"error": "Capture not completed"}), 400
+        
+    video_path = metadata["video_path"]
+    if os.path.exists(video_path):
+        directory = os.path.dirname(video_path)
+        filename = os.path.basename(video_path)
+        return send_from_directory(directory=directory, path=filename, as_attachment=True)
+    
     return jsonify({"error": "File not found"}), 404
