@@ -10,12 +10,20 @@ STREAMS = {}
 @streaming_bp.route("/start", methods=["POST"])
 def start_capture():
     try:
+        # Log everything about the request
         current_app.logger.debug(f"Headers: {dict(request.headers)}")
         current_app.logger.debug(f"Raw data: {request.get_data()}")
+        current_app.logger.debug(f"Form data: {request.form}")
+        current_app.logger.debug(f"Files: {request.files}")
         
-        data = request.get_json()
-        current_app.logger.info(f"Received start request with data: {data}")
-        
+        # Try to get JSON data and log if it fails
+        try:
+            data = request.get_json()
+            current_app.logger.debug(f"Parsed JSON data: {data}")
+        except Exception as e:
+            current_app.logger.error(f"Failed to parse JSON: {e}")
+            return jsonify({"error": "Invalid JSON data"}), 400
+            
         stream_url = data.get("stream_url")
         if not stream_url:
             current_app.logger.error("No stream_url provided in request")

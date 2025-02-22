@@ -14,10 +14,11 @@
             <form id="captureForm" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700">Stream URL</label>
-                    <input type="text" id="streamUrl" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required>
+                    <input type="text" id="streamUrl" class="mt-1 block w-full rounded-md border border-gray-300 p-2" required>
                 </div>
                 <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Start Capture</button>
             </form>
+            <div id="errorMessage" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded my-2 hidden"></div>
         </div>
 
         <!-- Active Captures -->
@@ -51,10 +52,10 @@
                     <!-- Page Analysis -->
                     <div class="page-analysis">
                         <h5 class="font-semibold">Page Elements Found:</h5>
-                        <pre class="bg-gray-100 p-2 rounded mt-1 text-sm elements-found"></pre>
+                        <pre class="bg-gray-100 p-2 rounded mt-1 text-sm elements-found overflow-auto max-h-40"></pre>
                         
                         <h5 class="font-semibold mt-2">Video Elements:</h5>
-                        <pre class="bg-gray-100 p-2 rounded mt-1 text-sm video-elements"></pre>
+                        <pre class="bg-gray-100 p-2 rounded mt-1 text-sm video-elements overflow-auto max-h-40"></pre>
                     </div>
 
                     <!-- Errors -->
@@ -74,15 +75,28 @@
         document.getElementById('captureForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const streamUrl = document.getElementById('streamUrl').value;
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.classList.add('hidden');
             
             try {
+                console.log('Submitting with URL:', streamUrl); // Debug log
                 const response = await fetch('/streams/start', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
                     body: JSON.stringify({ stream_url: streamUrl })
                 });
                 
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+                }
+                
                 const data = await response.json();
+                console.log('Response data:', data); // Debug log
+                
                 if (!activeStreams.has(data.id)) {
                     activeStreams.add(data.id);
                     createCaptureElement(data);
@@ -90,6 +104,8 @@
                 }
             } catch (error) {
                 console.error('Error starting capture:', error);
+                errorDiv.textContent = `Error: ${error.message}`;
+                errorDiv.classList.remove('hidden');
             }
         });
 

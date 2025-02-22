@@ -161,7 +161,6 @@ class StreamCapture:
                 logging.error(f"Play button not found or couldn't be clicked: {e}")
                 self.metadata["errors"].append(f"Play button error: {str(e)}")
 
-            # If we made it here, return success
             return True
 
         except Exception as e:
