@@ -4,6 +4,8 @@ FROM python:3.10-slim
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     wget \
+    chromium \
+    chromium-driver \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -12,13 +14,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir \
-    Flask==2.2.2 \
-    gunicorn==20.1.0 \
-    requests==2.28.2 \
-    beautifulsoup4==4.11.1 \
-    selenium==4.10.0 \
-    webdriver-manager==3.8.6
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
@@ -31,22 +27,19 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8080 \
     FLASK_APP=run.py \
-    FLASK_ENV=production
-
-# Debug script
-RUN echo '#!/bin/bash\n\
-echo "=== Directory Structure ==="\n\
-ls -R /app\n\
-echo "=== Starting Application ==="\n\
-exec gunicorn "run:app" \
-    --bind 0.0.0.0:$PORT \
-    --workers 1 \
-    --threads 2 \
-    --timeout 120 \
-    --log-level debug \
-    --error-logfile - \
-    --access-logfile -' > /app/start.sh && chmod +x /app/start.sh
+    FLASK_ENV=production \
+    GOOGLE_CHROME_BIN=/usr/bin/chromium \
+    DEBUG=False \
+    SECRET_KEY="your-secret-key-change-in-production"
 
 EXPOSE 8080
 
-CMD ["/app/start.sh"]
+# Use simpler CMD to help with debugging
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", \
+     "--workers", "1", \
+     "--threads", "2", \
+     "--timeout", "120", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-", \
+     "--log-level", "debug", \
+     "run:app"]
