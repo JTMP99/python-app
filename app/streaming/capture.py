@@ -11,10 +11,9 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from app.config import Config
+from app.config import LOG_FILE
 
-# Configure logging to write to a file
-LOG_FILE = Config.LOG_FILE
+# Configure logging
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.DEBUG,
@@ -26,23 +25,23 @@ class StreamCapture:
     def __init__(self, stream_url: str):
         self.stream_url = stream_url
         self.id = str(uuid.uuid4())
-        
-        # Setup directory structure
+
+        # Setup capture directory
         self.capture_dir = f"/app/captures/{self.id}"
         os.makedirs(self.capture_dir, exist_ok=True)
-        
+
         # File paths
         self.video_file = f"{self.capture_dir}/video.mp4"
         self.metadata_file = f"{self.capture_dir}/metadata.json"
-        
+
         # Capture state
         self.process = None
         self.capturing = False
         self.driver = None
         self.start_time = None
         self.end_time = None
-        
-        # Initialize metadata
+
+        # Metadata initialization
         self.metadata = {
             "id": self.id,
             "stream_url": stream_url,
@@ -65,33 +64,30 @@ class StreamCapture:
             logging.error(f"Failed to save metadata: {e}")
 
     def setup_selenium(self):
-        """Configure Selenium WebDriver and ensure Chrome is running."""
+        """Initialize Selenium WebDriver and load the stream page"""
         try:
             chrome_options = Options()
-            chrome_options.binary_location = os.getenv("GOOGLE_CHROME_BIN", "/usr/bin/chromium")
-            
-            # Force headless mode and debug options
-            chrome_options.add_argument("--headless=new")
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-dev-shm-usage")
-            chrome_options.add_argument("--disable-gpu")
-            chrome_options.add_argument("--window-size=1920,1080")
-            chrome_options.add_argument("--remote-debugging-port=9222")
+            chrome_options.add_argument('--headless')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.binary_location = os.getenv('GOOGLE_CHROME_BIN', '/usr/bin/chromium')
 
             self.driver = webdriver.Chrome(options=chrome_options)
-            self.driver.set_page_load_timeout(120)  # Ensure Selenium waits
             logging.info("Selenium WebDriver initialized successfully")
 
-            # Navigate to the stream page
+            # Navigate to stream
             logging.info(f"Navigating to stream URL: {self.stream_url}")
             self.driver.get(self.stream_url)
 
-            # Wait for the page to fully load
-            time.sleep(10)  # Increase if needed
-
-            # Check if Chrome is running
-            output = subprocess.getoutput("ps aux | grep chrome")
-            logging.debug(f"Chrome processes running:\n{output}")
+            # Wait for the play button and click it
+            try:
+                play_button = WebDriverWait(self.driver, 60).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button[aria-label='Play']"))
+                )
+                play_button.click()
+                logging.info("Clicked play button to start the stream")
+            except Exception as e:
+                logging.warning(f"Play button not found or could not be clicked: {e}")
 
             return True
         except Exception as e:
@@ -100,16 +96,19 @@ class StreamCapture:
             return False
 
     def start_capture(self) -> None:
-        """Start capturing video"""
+        """Start video recording with FFmpeg"""
         try:
             if not self.setup_selenium():
                 return
-            
+
             self.start_time = datetime.now()
             self.capturing = True
             logging.info(f"Capture started for {self.stream_url}")
-            
-            # Start FFmpeg process
+
+            # Ensure the directory exists before running FFmpeg
+            os.makedirs(self.capture_dir, exist_ok=True)
+
+            # FFmpeg capture command
             command = [
                 "ffmpeg",
                 "-f", "x11grab",
@@ -117,10 +116,10 @@ class StreamCapture:
                 "-i", os.getenv("DISPLAY", ":99"),
                 "-c:v", "libx264",
                 "-preset", "ultrafast",
-                "-t", "60",  # Limit to 60 seconds for testing
+                "-t", "60",
                 self.video_file
             ]
-            
+
             logging.debug(f"Running FFmpeg command: {' '.join(command)}")
             self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -130,14 +129,15 @@ class StreamCapture:
             self.stop_capture()
 
     def stop_capture(self) -> None:
-        """Stop capturing"""
+        """Stop video capture"""
         try:
             if self.process:
                 self.process.terminate()
                 self.process.wait(timeout=10)
+
             if self.driver:
                 self.driver.quit()
-            
+
             self.end_time = datetime.now()
             duration = (self.end_time - self.start_time).total_seconds() if self.start_time else None
             self._update_metadata(status="completed", end_time=self.end_time, duration=duration)
@@ -148,5 +148,5 @@ class StreamCapture:
             self._update_metadata(errors=f"Capture stop error: {str(e)}")
 
     def get_status(self) -> dict:
-        """Get capture status"""
+        """Retrieve capture status"""
         return self.metadata
