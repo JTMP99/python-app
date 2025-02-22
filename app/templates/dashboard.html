@@ -16,7 +16,14 @@
                     <label class="block text-sm font-medium text-gray-700">Stream URL</label>
                     <input type="text" id="streamUrl" class="mt-1 block w-full rounded-md border border-gray-300 p-2" required>
                 </div>
-                <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Start Capture</button>
+                <div class="flex justify-between items-center">
+                    <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Start Capture</button>
+                    <div id="timeoutTimer" class="hidden">
+                        <span class="font-medium text-orange-600">Timeout in: </span>
+                        <span id="timerValue" class="font-bold text-orange-600">60</span>
+                        <span class="text-orange-600"> seconds</span>
+                    </div>
+                </div>
             </form>
             <div id="errorMessage" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded my-2 hidden"></div>
         </div>
@@ -70,6 +77,39 @@
 
     <script>
         let activeStreams = new Set();
+        let timeoutTimer;
+        
+        function startTimer() {
+            const timerDiv = document.getElementById('timeoutTimer');
+            const timerValue = document.getElementById('timerValue');
+            let timeLeft = 60;
+            
+            timerDiv.classList.remove('hidden');
+            timerValue.textContent = timeLeft;
+            
+            timeoutTimer = setInterval(() => {
+                timeLeft--;
+                timerValue.textContent = timeLeft;
+                
+                if (timeLeft <= 10) {
+                    timerValue.classList.add('text-red-600');
+                    timerValue.classList.remove('text-orange-600');
+                }
+                
+                if (timeLeft <= 0) {
+                    clearInterval(timeoutTimer);
+                }
+            }, 1000);
+        }
+        
+        function stopTimer() {
+            if (timeoutTimer) {
+                clearInterval(timeoutTimer);
+                document.getElementById('timeoutTimer').classList.add('hidden');
+                document.getElementById('timerValue').classList.remove('text-red-600');
+                document.getElementById('timerValue').classList.add('text-orange-600');
+            }
+        }
 
         // Start a new capture
         document.getElementById('captureForm').addEventListener('submit', async (e) => {
@@ -77,9 +117,11 @@
             const streamUrl = document.getElementById('streamUrl').value;
             const errorDiv = document.getElementById('errorMessage');
             errorDiv.classList.add('hidden');
+            stopTimer();  // Clear any existing timer
+            startTimer();  // Start new timer
             
             try {
-                console.log('Submitting with URL:', streamUrl); // Debug log
+                console.log('Submitting with URL:', streamUrl);
                 const response = await fetch('/streams/start', {
                     method: 'POST',
                     headers: { 
@@ -95,17 +137,19 @@
                 }
                 
                 const data = await response.json();
-                console.log('Response data:', data); // Debug log
+                console.log('Response data:', data);
                 
                 if (!activeStreams.has(data.id)) {
                     activeStreams.add(data.id);
                     createCaptureElement(data);
                     pollCaptureStatus(data.id);
+                    stopTimer();  // Stop timer on successful capture
                 }
             } catch (error) {
                 console.error('Error starting capture:', error);
                 errorDiv.textContent = `Error: ${error.message}`;
                 errorDiv.classList.remove('hidden');
+                stopTimer();  // Stop timer on error
             }
         });
 
@@ -170,6 +214,18 @@
                 videoPre.textContent = JSON.stringify(data.page_analysis.video_elements || [], null, 2);
             }
 
+            if (data.bot_detection && data.bot_detection.found_measures.length > 0) {
+                const detectionInfo = document.createElement('div');
+                detectionInfo.className = 'mt-4 p-2 bg-yellow-100 rounded';
+                detectionInfo.innerHTML = `
+                    <h5 class="font-semibold">Bot Detection Found:</h5>
+                    <ul class="list-disc pl-4">
+                        ${data.bot_detection.found_measures.map(m => `<li>${m}</li>`).join('')}
+                    </ul>
+                `;
+                captureDiv.querySelector('.debug-info').appendChild(detectionInfo);
+            }
+        
             // Update errors
             const errorsPre = captureDiv.querySelector('.error-list');
             errorsPre.textContent = data.errors.length ? 

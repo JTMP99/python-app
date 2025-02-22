@@ -11,7 +11,8 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.remote.webdriver import WebElement
+from selenium.webdriver.common.action_chains import ActionChains  # Add this import
+import random  # Add this import
 from app.config import Config
 
 # Ensure directories exist
@@ -102,97 +103,112 @@ class StreamCapture:
         except Exception as e:
             logging.error(f"Screenshot error: {e}")
             return None
-
-    def setup_selenium(self):
-        """Configure Selenium WebDriver and navigate to stream page"""
+        
+    def check_for_bot_detection(self):
+        """Check if page has common anti-bot measures"""
         try:
-            logging.info("Initializing Selenium WebDriver...")
-
-            chrome_options = Options()
-            chrome_options.add_argument('--headless')
-            chrome_options.add_argument('--no-sandbox')
-            chrome_options.add_argument('--disable-dev-shm-usage')
-            chrome_options.add_argument('--window-size=1920,1080')
-            chrome_options.add_argument('--disable-gpu')  # Added for headless stability
-            chrome_options.binary_location = os.getenv('GOOGLE_CHROME_BIN', '/usr/bin/chromium')
-
-            logging.debug("Chrome options configured, creating WebDriver...")
-            self.driver = webdriver.Chrome(options=chrome_options)
-            logging.info("Selenium WebDriver initialized successfully")
-
-            # Navigate to the stream page
-            logging.info(f"Navigating to stream URL: {self.stream_url}")
-            self.driver.get(self.stream_url)
-            self.take_debug_screenshot("initial_load")
-
-            # Wait for page load and analyze
-            time.sleep(5)  # Initial wait
-            self.take_debug_screenshot("after_initial_wait")
-            self.analyze_page_elements()
-            
-            logging.info("Checking for common video elements...")
-            video_selectors = [
-                "video",
-                "iframe",
-                ".video-player",
-                "[aria-label*='video']",
-                "[aria-label*='player']",
-                "button[aria-label='Play']",
-                ".ytp-play-button",  # YouTube
-                ".vjs-play-control"  # VideoJS
-            ]
-            
-            found_elements = []
-            for selector in video_selectors:
-                try:
-                    elems = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    if elems:
-                        found_elements.append({
-                            "selector": selector,
-                            "count": len(elems),
-                            "visible": any(e.is_displayed() for e in elems)
-                        })
-                except Exception as e:
-                    logging.error(f"Error checking selector {selector}: {e}")
-                    continue
-
-            self.metadata["page_analysis"]["video_elements"] = found_elements
-            
-            # Take another screenshot before attempting to click play
-            self.take_debug_screenshot("before_play_attempt")
-            
-            # Look for and try to click play button with longer timeout
-            try:
-                # Try multiple selectors for play button
-                play_selectors = [
-                    "button[aria-label='Play']",
-                    ".ytp-play-button",
-                    ".vjs-play-control",
-                    "[aria-label*='Play']",
-                    "[title*='Play']"
+            bot_indicators = {
+                'cloudflare': [
+                    "#challenge-form",
+                    "#cf-challenge-running",
+                    "div[class*='cf-']",
+                    "cloudflare-challenge"
+                ],
+                'general_captcha': [
+                    "recaptcha",
+                    "captcha",
+                    "g-recaptcha",
+                    "[name*='captcha']"
+                ],
+                'rate_limiting': [
+                    "too many requests",
+                    "rate limit",
+                    "timeout",
+                    "detected automated"
                 ]
-                
-                for selector in play_selectors:
-                    try:
-                        play_button = WebDriverWait(self.driver, 10).until(
-                            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
-                        )
-                        play_button.click()
-                        logging.info(f"Clicked play button with selector: {selector}")
-                        self.take_debug_screenshot("after_play_click")
-                        break
-                    except:
-                        continue
+            }
+
+            page_source = self.driver.page_source.lower()
+            headers = self.driver.execute_script("return navigator.userAgent")
+            
+            found_measures = []
+            
+            for category, indicators in bot_indicators.items():
+                for indicator in indicators:
+                    if indicator.lower() in page_source:
+                        found_measures.append(f"{category}: {indicator}")
                         
-            except Exception as e:
-                logging.error(f"Play button not found or couldn't be clicked: {e}")
-                self.metadata["errors"].append(f"Play button error: {str(e)}")
-                # Continue anyway - some streams might autoplay
+            self.metadata["bot_detection"] = {
+                "found_measures": found_measures,
+                "user_agent": headers
+            }
+            
+            if found_measures:
+                logging.warning(f"Bot detection measures found: {found_measures}")
+        except Exception as e:
+            logging.error(f"Error checking bot detection: {e}")
+    
+    def setup_selenium(self):
+        try:
+            chrome_options = Options()
+            
+            # Enhanced stealth options
+            chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+            chrome_options.add_argument('--disable-infobars')
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
+            
+            # Randomize window size slightly
+            width = random.randint(1800, 1920)
+            height = random.randint(1000, 1080)
+            chrome_options.add_argument(f'--window-size={width},{height}')
+            
+            # Add realistic user agent
+            user_agents = [
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+            ]
+            chrome_options.add_argument(f'--user-agent={random.choice(user_agents)}')
 
-            # Final pre-capture screenshot
-            self.take_debug_screenshot("pre_capture")
-            return True
-
+            # Retry logic with backoff
+            max_retries = 3
+            retry_delay = 2
+            
+            for attempt in range(max_retries):
+                try:
+                    self.driver = webdriver.Chrome(options=chrome_options)
+                    
+                    # Execute stealth JavaScript
+                    self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+                        'source': '''
+                            Object.defineProperty(navigator, 'webdriver', {
+                                get: () => undefined
+                            });
+                        '''
+                    })
+                    
+                    # Add realistic mouse movements
+                    actions = ActionChains(self.driver)
+                    actions.move_by_offset(random.randint(10, 50), random.randint(10, 50))
+                    actions.perform()
+                    
+                    self.driver.get(self.stream_url)
+                    self.check_for_bot_detection()
+                    
+                    # Vary wait time slightly
+                    time.sleep(random.uniform(3, 5))
+                    
+                    if attempt > 0:
+                        logging.info(f"Successfully connected on attempt {attempt + 1}")
+                    break
+                    
+                except Exception as e:
+                    logging.error(f"Attempt {attempt + 1} failed: {e}")
+                    if attempt < max_retries - 1:
+                        wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                        time.sleep(wait_time)
+                    else:
+                        raise
         except Exception as e:
             logging.exception("Selenium setup error")
             self.metadata["errors"].append(f"Selenium setup error: {str(e)}")
@@ -202,7 +218,7 @@ class StreamCapture:
                 except:
                     pass
             return False
-
+        
     def start_capture(self) -> None:
         """Start capturing video"""
         try:
