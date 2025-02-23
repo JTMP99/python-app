@@ -4,9 +4,22 @@ import logging
 class Config:
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"
     SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")  # !!! CHANGE THIS
-    DATABASE_URI = os.getenv("DATABASE_URI", "sqlite:///legislative_documents.db") # Future
+    
+    # Database Configuration
+    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL')  # DO Managed Database URL
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_size': 5,
+        'max_overflow': 10,
+        'pool_timeout': 30,
+        'pool_recycle': 1800,
+    }
+    
+    # Browser/Capture Configuration
     GOOGLE_CHROME_BIN = os.getenv("GOOGLE_CHROME_BIN", "/usr/bin/chromium")
-    BROKER_URL = os.getenv("BROKER_URL", "redis://localhost:6379/0")  # Celery
+    
+    # Remove Celery config if not using it
+    # BROKER_URL = os.getenv("BROKER_URL", "redis://localhost:6379/0")
 
     # Logging configuration
     LOG_DIR = "/app/logs"
@@ -15,7 +28,7 @@ class Config:
     LOG_FILE = f"{LOG_DIR}/app.log"
     LOG_LEVEL = logging.DEBUG if DEBUG else logging.INFO
 
-    # Set up logging (Correctly here, and ONLY here)
+    # Set up logging
     logging.basicConfig(
         filename=LOG_FILE,
         level=LOG_LEVEL,
@@ -24,19 +37,27 @@ class Config:
     )
 
 class DevelopmentConfig(Config):
-    DEBUG = True  # Enable debug mode in development
+    DEBUG = True
     LOG_LEVEL = logging.DEBUG
-    DATABASE_URI = "sqlite:///dev_legislative_documents.db"  # SQLite for dev
-
+    # Use local PostgreSQL for development if needed
+    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'postgresql://localhost:5432/captures')
 
 class ProductionConfig(Config):
-    # Get DATABASE_URL from environment variable (set on DigitalOcean)
-    DATABASE_URI = os.environ.get('DATABASE_URL')  # Use DATABASE_URL for production
-    # Other production settings (e.g., disable debug mode, set log level)
     DEBUG = False
     LOG_LEVEL = logging.INFO
-
-    #Add secret key and ensure its a boolean
-    SECRET_KEY = os.environ.get('SECRET_KEY')
-    if not SECRET_KEY:
-        raise ValueError("No SECRET_KEY set for Flask application. Set it as an environment variable.")
+    
+    # Stricter database settings for production
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_size': 10,
+        'max_overflow': 20,
+        'pool_timeout': 60,
+        'pool_recycle': 3600,
+    }
+    
+    # Ensure required environment variables are set
+    @classmethod
+    def init_app(cls, app):
+        required_vars = ['DATABASE_URL', 'SECRET_KEY']
+        missing = [var for var in required_vars if not os.getenv(var)]
+        if missing:
+            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")

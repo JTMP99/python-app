@@ -9,4 +9,6 @@ lxml==4.9.2
 ffmpeg-python==0.2.0
 celery==5.3.6
 redis==5.0.1
-psycopg2-binary==2.9.9
+Flask-SQLAlchemy==3.0.2
+Flask-Migrate==4.0.4
+psycopg2-binary==2.9.5  # For PostgreSQL

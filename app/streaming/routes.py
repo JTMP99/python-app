@@ -4,30 +4,51 @@ from app.streaming import streaming_bp  # Import the blueprint
 from app.streaming.capture import StreamCapture  # Import StreamCapture class
 import os
 import logging
-
+from app.services.capture_service import CaptureService
+import threading
 
 @streaming_bp.route("/start", methods=["POST"])
 def start_capture():
-    """Start a new stream capture (now synchronous)."""
-    data = request.get_json()
-    stream_url = data.get("stream_url")
-
-    if not stream_url:
-        return jsonify({"error": "stream_url parameter is required"}), 400
-
-    # Create and start the StreamCapture directly
-    stream_capture = StreamCapture(stream_url)
-    current_app.STREAMS[stream_capture.id] = stream_capture  # Add to STREAMS
     try:
-        stream_capture.start_capture()
+        data = request.get_json()
+        stream_url = data.get("stream_url")
+        if not stream_url:
+            return jsonify({"error": "stream_url required"}), 400
+
+        # Create DB record first
+        db_capture = CaptureService.create_capture(stream_url)
+        
+        # Start capture process in background
+        def run_capture():
+            try:
+                capture = StreamCapture(stream_url, db_capture.id)
+                capture.initialize()
+            except Exception as e:
+                CaptureService.update_capture_status(
+                    db_capture.id, 
+                    'failed',
+                    error=str(e)
+                )
+
+        thread = threading.Thread(target=run_capture)
+        thread.daemon = True
+        thread.start()
+
+        return jsonify(db_capture.to_dict()), 202
+
     except Exception as e:
-        #Make sure to catch and return errors.
-        logging.exception(f"Error starting stream capture: {e}")
         return jsonify({"error": str(e)}), 500
 
-    # Return stream data
-    return jsonify(stream_capture.get_status())
-
+@streaming_bp.route("/status/<capture_id>")
+def get_status(capture_id):
+    """Get capture status with metrics"""
+    try:
+        data = CaptureService.get_capture_with_metrics(capture_id)
+        if not data:
+            return jsonify({"error": "Capture not found"}), 404
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @streaming_bp.route("/stop", methods=["POST"])
@@ -49,7 +70,6 @@ def stop_capture():
     else:
         current_app.logger.error(f"Invalid stream_id: {stream_id}")
         return jsonify({"error": "Stream not found or already stopped"}), 404
-
 
 
 @streaming_bp.route("/status/<stream_id>", methods=["GET"])
