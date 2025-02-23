@@ -2,8 +2,11 @@
 from datetime import datetime
 from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.ext.declarative import declarative_base
 from app import db
 import uuid
+
+db = declarative_base()
 
 class StreamCapture(db.Model):
     __tablename__ = 'stream_captures'
