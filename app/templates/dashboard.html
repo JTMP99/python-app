@@ -68,7 +68,7 @@
     </div>
 
     <script>
-        let activeStreams = new Set(); // Keep track of active streams (using task IDs now)
+        let activeStreams = new Set(); // Keep track of active streams/tasks (using task IDs initially)
         let timeoutTimer;
 
         function startTimer() {
@@ -111,14 +111,14 @@
             const errorDiv = document.getElementById('errorMessage');
             errorDiv.classList.add('hidden');
             stopTimer(); // Clear any existing timer
-            startTimer();
+            startTimer(); // Start new timer
 
             try {
                 const response = await fetch('/streams/start', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Accept': 'application/json' // Add Accept header
+                        'Accept': 'application/json' // Added for clarity
                     },
                     body: JSON.stringify({ stream_url: streamUrl })
                 });
@@ -129,12 +129,14 @@
                 }
 
                 const data = await response.json(); // Expecting { task_id: "...", status: "pending" }
+                console.log('Response data (start):', data); // Log the response
 
                 if (data.task_id) {
-                    // Create a placeholder element with the task ID
-                    createCaptureElement({ id: data.task_id, stream_url: streamUrl, status: data.status });
+                    // Create a placeholder element with the task ID.  This is where the *initial* status will go.
+                    createCaptureElement({ id: data.task_id, stream_url: streamUrl, status: data.status || 'Pending...' });  // Provide initial status
+                    activeStreams.add(data.task_id); // Add the *task ID* to activeStreams
                     pollTaskStatus(data.task_id); // Start polling for task status
-                    stopTimer();
+                    stopTimer(); // Stop timer on success
                 } else {
                     throw new Error("Did not receive a task ID from the server.");
                 }
@@ -143,7 +145,7 @@
                 console.error('Error starting capture:', error);
                 errorDiv.textContent = `Error: ${error.message}`;
                 errorDiv.classList.remove('hidden');
-                stopTimer();
+                stopTimer(); // Stop timer
             }
         });
 
@@ -155,18 +157,18 @@
 
             // Set initial data (stream URL, task ID, initial status)
             clone.querySelector('.stream-url').textContent = data.stream_url;
-            clone.querySelector('.capture-id').textContent = data.id; // This is now the *task* ID initially
-            clone.querySelector('.status').textContent = data.status || 'Pending...'; // Initial status
-            clone.querySelector('.duration').textContent = ''; // No duration yet
+            clone.querySelector('.capture-id').textContent = data.id; // Initially, this is the *task* ID
+            clone.querySelector('.status').textContent = data.status || 'Pending...';
+            clone.querySelector('.duration').textContent = data.duration || ''; // Initially empty
 
-            // Add stop button handler (using the *capture* ID, once we have it)
+            // Add stop button handler (IMPORTANT: We'll update the ID later)
             const stopBtn = clone.querySelector('.stop-capture');
-            stopBtn.addEventListener('click', () => stopCapture(data.id)); // Initially, data.id is the task ID
+            stopBtn.addEventListener('click', () => stopCapture(data.id));
 
 
             const container = document.getElementById('activeCaptures');
             const captureDiv = document.createElement('div');
-            captureDiv.setAttribute('data-capture-id', data.id); // Use task ID initially
+            captureDiv.setAttribute('data-capture-id', data.id); // Set data-capture-id to task ID
             captureDiv.appendChild(clone);
             container.insertBefore(captureDiv, container.firstChild); // Add to the top
         }
@@ -174,27 +176,37 @@
 
         // --- Update the capture element with new data (from polling) ---
         function updateCaptureElement(data) {
-            // Find element by *task ID* initially, then by stream ID once available
-            const captureDiv = document.querySelector(`[data-capture-id="${data.id}"]`) ||
-                               document.querySelector(`[data-capture-id="${data.stream_id}"]`); // Fallback
-            if (!captureDiv) return;
+            // 1. Try to find the element by task_id (initial state)
+            let captureDiv = document.querySelector(`[data-capture-id="${data.task_id}"]`);
 
-
-           if (data.id){
+            // 2. If found by task_id, and we now have a stream_id, update the data-capture-id
+            if (captureDiv && data.id) {
                 captureDiv.setAttribute('data-capture-id', data.id);
-                captureDiv.querySelector('.capture-id').textContent = data.id;
             }
 
-            // Update basic info
-            captureDiv.querySelector('.status').textContent = data.status;
-            captureDiv.querySelector('.duration').textContent = data.duration || 'In progress';
+            // 3. If not found by task_id (or we just updated it), try to find by stream_id
+            captureDiv = document.querySelector(`[data-capture-id="${data.id}"]`);
+
+
+            if (!captureDiv) {
+                console.warn(`Could not find capture element to update. Task ID: ${data.task_id}, Stream ID: ${data.id}`); // More specific warning
+                return;
+            }
+
+            // Update status (use data.state for Celery state, data.status for capture status)
+            captureDiv.querySelector('.status').textContent = data.status || data.state || 'Unknown';
+
+             if (data.duration) {
+                captureDiv.querySelector('.duration').textContent = data.duration;
+            }
+
 
             // Update screenshots (if available)
             const gallery = captureDiv.querySelector('.screenshot-gallery');
             gallery.innerHTML = ''; // Clear existing
             if (data.debug_screenshots && data.debug_screenshots.length > 0) {
                 data.debug_screenshots.forEach(screenshot => {
-                    const timestamp = screenshot.split('/').pop().split('_')[0]; // Extract timestamp
+                    const timestamp = screenshot.split('/').pop().split('_')[1].split('.')[0]; // More robust timestamp extraction
                     const img = document.createElement('div');
                     img.className = 'screenshot-container';
                     img.innerHTML = `
@@ -226,44 +238,50 @@
 
         // --- Poll for task status ---
         async function pollTaskStatus(taskId) {
-            if (!activeStreams.has(taskId)) return; // Stop if task ID removed
+
+            if (!activeStreams.has(taskId)) {
+                console.log(`Task ${taskId} is no longer active.  Stopping polling.`); // Debugging log
+                return; // Stop if task ID removed
+            }
+
 
             try {
-                const response = await fetch(`/streams/status/${taskId}`);
+                const response = await fetch(`/streams/status/${taskId}`); // CORRECT URL
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 const data = await response.json();
+                console.log("poll data", data)
 
                 if (data.state === 'SUCCESS') {
                     // Task succeeded:  Now we have the *stream capture* data
                     activeStreams.delete(taskId); // Remove the *task* ID
-                    if (data.id) {
-                      activeStreams.add(data.id) // Add the stream id.
-                      updateCaptureElement(data); // Update with full capture details
-                    }
-                    // Consider adding the stream ID to activeStreams here, if needed.
-
+                    activeStreams.add(data.id); // Add the *stream* ID
+                    updateCaptureElement(data); // Update with full capture details
                 } else if (data.state === 'FAILURE') {
                     // Task failed
-                    console.error("Task failed:", data.status);
-                    activeStreams.delete(taskId);
-                     updateCaptureElement({ id: taskId, status: 'Failed', errors: [data.status]}); // Show error
+                    console.error("Task failed:", data.status); // Log the error
+                    updateCaptureElement({ task_id: taskId, status: 'Failed', errors: [data.status] }); // Show error
+                    activeStreams.delete(taskId);  // Remove task ID on failure
                 } else {
                     // Task is still pending or in progress...
-                    updateCaptureElement({ id: taskId, status: data.status || data.state });
+                    updateCaptureElement({ task_id: taskId, status: data.status || data.state }); // Show "Pending..." or "Running..."
                     setTimeout(() => pollTaskStatus(taskId), 2000); // Poll again in 2 seconds
                 }
             } catch (error) {
                 console.error('Error polling task status:', error);
-                //  Consider stopping polling on error, or showing an error message.
+                // Consider stopping polling on error, or showing an error message.
+                 updateCaptureElement({ task_id: taskId, status: 'Error', errors: [error.message] });
             }
         }
 
 
         // --- Stop capture (Sends request to stop the *capture*, not the task) ---
         async function stopCapture(id) {
-          //In this case, it's the stream id.
+           // Now id could be a task ID *or* a stream ID.  We handle both.
+           console.log("Stopping capture with ID:", id);  // Debug log
+
+
             try {
                 const response = await fetch('/streams/stop', {
                     method: 'POST',
@@ -271,13 +289,23 @@
                     body: JSON.stringify({ stream_id: id }) // Send stream_id
                 });
 
-                const data = await response.json();
+                 const data = await response.json();
+
                 if (response.ok) {
-                    updateCaptureElement(data); // Update UI
-                    activeStreams.delete(id)
+                    // No need to update, as routes.py deletes
+                    // Find and remove the element
+                    const captureDiv = document.querySelector(`[data-capture-id="${id}"]`);
+                    if (captureDiv) {
+                         captureDiv.remove();
+                         }
                 } else {
-                    throw new Error(data.error || 'Failed to stop capture');
+                     throw new Error(data.error || 'Failed to stop capture');
                 }
+
+
+                // Remove from activeStreams, regardless of whether it's a task ID or stream ID
+                activeStreams.delete(id);
+
 
             } catch (error) {
                 console.error('Error stopping capture:', error);
