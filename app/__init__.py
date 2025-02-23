@@ -1,8 +1,6 @@
+# app/__init__.py
 from flask import Flask, render_template
-from .config import Config
-from .streaming.routes import streaming_bp
-from .scraping.routes import scraping_bp
-from .documents.routes import documents_bp
+from .config import Config  # Import your Config class
 from celery import Celery
 
 # Create the Celery instance *outside* the app factory
@@ -21,8 +19,13 @@ def create_app(config_class=Config):
     # Import and register blueprints (within the app context)
     from app.streaming import streaming_bp
     app.register_blueprint(streaming_bp, url_prefix='/streams')
-    app.register_blueprint(scraping_bp, url_prefix="/scraping")
-    app.register_blueprint(documents_bp, url_prefix="/documents")
+
+    # --- Other blueprints (if you have them) ---
+    # from app.scraping import scraping_bp
+    # app.register_blueprint(scraping_bp, url_prefix='/scraping')
+
+    # from app.documents import documents_bp
+    # app.register_blueprint(documents_bp, url_prefix='/documents')
 
     # --- Dashboard route (at the root URL) ---
     @app.route("/")

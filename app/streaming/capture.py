@@ -1,5 +1,4 @@
 import subprocess
-import threading
 import time
 import uuid
 import json
@@ -9,11 +8,17 @@ from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.by import By  # Import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import random
 import tempfile
 import shutil
-from app.config import Config  # Import the Config class
+from app.config import Config
 from app import celery, STREAMS  # Import Celery and STREAMS
+
+# Ensure /app/captures exists (created in Dockerfile, but good to be sure)
+os.makedirs("/app/captures", exist_ok=True)
 
 
 class StreamCapture:
@@ -264,7 +269,7 @@ class StreamCapture:
         return self.metadata
 
     def take_debug_screenshot(self, name: str):
-        """Take a screenshot for debugging (implementation assumed)"""
+        """Take a screenshot for debugging"""
         try:
             screenshot_path = f"{self.debug_dir}/{name}_{int(time.time())}.png"
             self.driver.save_screenshot(screenshot_path)
@@ -273,10 +278,49 @@ class StreamCapture:
         except Exception as e:
             logging.error(f"Failed to take screenshot: {e}")
 
-
     def check_for_bot_detection(self):
-        """Check for bot detection (implementation assumed)"""
-        pass
+        """Check for common bot detection mechanisms."""
+        try:
+            # Check for reCAPTCHA
+            if self.driver.find_elements(By.TAG_NAME, 'iframe[src*="recaptcha"]'):
+                self.metadata["errors"].append("reCAPTCHA detected")
+                logging.warning("reCAPTCHA detected")
+                return True  # Or some other signal
+
+            # Check for Cloudflare's "I'm Under Attack Mode" (IUAM)
+            if "I'm Under Attack Mode" in self.driver.title:
+                self.metadata["errors"].append("Cloudflare IUAM detected")
+                logging.warning("Cloudflare IUAM detected")
+                return True
+
+            #Check for a button with id="challenge-running"
+            if self.driver.find_elements(By.ID, 'challenge-running'):
+                self.metadata["errors"].append("Detected element with id='challenge-running'")
+                logging.warning("Detected element with id='challenge-running'")
+                return True
+
+            # Check for a div with id="cf-challenge-running"
+            if self.driver.find_elements(By.ID, "cf-challenge-running"):
+                self.metadata["errors"].append("Cloudflare challenge detected (cf-challenge-running)")
+                logging.warning("Cloudflare challenge detected (cf-challenge-running)")
+                return True
+
+            # Generic check for common bot detection strings
+            for phrase in ["bot detection", "access denied", "are you a human", "please wait"]:
+                if phrase in self.driver.page_source.lower():
+                    self.metadata["errors"].append(f"Bot detection phrase found: {phrase}")
+                    logging.warning(f"Bot detection phrase found: {phrase}")
+                    return True  # Or handle differently
+
+
+            # Add more checks as needed, based on the sites you are targeting
+
+            return False  # No bot detection found (so far)
+
+        except Exception as e:
+            logging.exception("Error during bot detection check")
+            self.metadata["errors"].append(f"Bot detection check error: {str(e)}")
+            return True  # Treat errors as potential bot detection
 
 # --- Celery Task ---
 @celery.task(bind=True)  # Use bind=True to access task instance (self)

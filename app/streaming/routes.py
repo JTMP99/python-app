@@ -1,6 +1,6 @@
 # app/streaming/routes.py
 from flask import request, jsonify, send_from_directory, current_app, send_file
-from app.streaming import streaming_bp
+from app.streaming import streaming_bp  # Import the blueprint
 from app.streaming.capture import start_capture_task  # Import Celery *task*
 from app import STREAMS, celery  # Import STREAMS and celery
 import os
@@ -45,7 +45,7 @@ def stop_capture():
 
 @streaming_bp.route("/status/<task_id>", methods=["GET"])
 def get_status(task_id):
-    """Get the status of a Celery task (and the capture, if finished)."""
+    """Get the status of a Celery task (and the capture, if it's finished)."""
     task = celery.AsyncResult(task_id)
 
     if task.state == 'PENDING':
@@ -63,7 +63,7 @@ def get_status(task_id):
           if stream_id in STREAMS:
             stream_capture = STREAMS[stream_id]
             # Update response with status
-            response.update(stream_capture.get_status()) # Use get_status
+            response.update(stream_capture.get_status()) # Use get_status from StreamCapture
           else:
             response['status'] = "Capture data not found"
 
