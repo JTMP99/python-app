@@ -1,4 +1,5 @@
 import subprocess
+import threading
 import time
 import uuid
 import json
@@ -269,7 +270,7 @@ class StreamCapture:
         return self.metadata
 
     def take_debug_screenshot(self, name: str):
-        """Take a screenshot for debugging"""
+        """Take a screenshot for debugging and add its path to metadata."""
         try:
             screenshot_path = f"{self.debug_dir}/{name}_{int(time.time())}.png"
             self.driver.save_screenshot(screenshot_path)
@@ -277,6 +278,7 @@ class StreamCapture:
             logging.debug(f"Screenshot saved: {screenshot_path}")
         except Exception as e:
             logging.error(f"Failed to take screenshot: {e}")
+
 
     def check_for_bot_detection(self):
         """Check for common bot detection mechanisms."""

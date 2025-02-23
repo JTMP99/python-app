@@ -38,34 +38,33 @@ def stop_capture():
         # Attempt to stop the running capture process.
         stream_capture.stop_capture()
         # Remove from active streams
-        del STREAMS[stream_id]
+        del STREAMS[stream_id]  # Remove from the dictionary
         return jsonify({"status": "stopped"})
     else:
-        return jsonify({"error": "Stream not found or already stopped"}), 404
+        return jsonify({"error": "Stream not found or already stopped"}), 404 #Correct status code.
 
 @streaming_bp.route("/status/<task_id>", methods=["GET"])
 def get_status(task_id):
-    """Get the status of a Celery task (and the capture, if it's finished)."""
+    """Get the status of a Celery task (and the capture, if finished)."""
     task = celery.AsyncResult(task_id)
 
     if task.state == 'PENDING':
         response = {
             'state': task.state,
-            'status': 'Pending...'
+            'status': 'Pending...'  # Initial status
         }
     elif task.state != 'FAILURE':
         response = {
             'state': task.state,
-            'status': task.info.get('status', '') if isinstance(task.info, dict) else str(task.info),
+            'status': task.info.get('status', '') if isinstance(task.info, dict) else str(task.info),  # Get status, handle non-dict
         }
         if task.state == 'SUCCESS':
-          stream_id = task.result # This now holds the stream ID.
-          if stream_id in STREAMS:
-            stream_capture = STREAMS[stream_id]
-            # Update response with status
-            response.update(stream_capture.get_status()) # Use get_status from StreamCapture
-          else:
-            response['status'] = "Capture data not found"
+            stream_id = task.result # This now holds the *stream ID*.
+            if stream_id in STREAMS:
+              stream_capture = STREAMS[stream_id]
+              response.update(stream_capture.get_status()) # Use get_status for the rest.
+            else:
+                response['status'] = "Capture data not found" # Error
 
     else:
         # Something went wrong in the task.
