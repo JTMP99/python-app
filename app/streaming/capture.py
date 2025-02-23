@@ -1,5 +1,5 @@
 import subprocess
-import threading  # Used, but not explicitly in this snippet. Good practice to keep.
+import threading
 import time
 import uuid
 import json
@@ -8,28 +8,13 @@ import logging
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By  # Not directly used, but good for more complex selectors
-from selenium.webdriver.support.ui import WebDriverWait  # Not used, but good for dynamic content
-from selenium.webdriver.support import expected_conditions as EC  # Not used, but good for dynamic content
 from selenium.webdriver.common.action_chains import ActionChains
 import random
 import tempfile
 import shutil
-from app.config import Config  # Assuming this is a Flask config object
+from app.config import Config  # Import the Config class
+from app import celery, STREAMS  # Import Celery and STREAMS
 
-# Ensure directories exist
-os.makedirs("/app/logs", exist_ok=True)
-os.makedirs("/app/captures", exist_ok=True)
-
-# Configure logging using Config class
-LOG_FILE = Config.LOG_FILE  # Good practice to get log file from config
-
-logging.basicConfig(
-    filename=LOG_FILE,
-    level=logging.DEBUG,  # DEBUG level is good for development, consider INFO for production
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    filemode="a"  # Append mode is generally a good idea
-)
 
 class StreamCapture:
     def __init__(self, stream_url: str):
@@ -292,3 +277,18 @@ class StreamCapture:
     def check_for_bot_detection(self):
         """Check for bot detection (implementation assumed)"""
         pass
+
+# --- Celery Task ---
+@celery.task(bind=True)  # Use bind=True to access task instance (self)
+def start_capture_task(self, stream_url):
+    stream_capture = StreamCapture(stream_url)
+    # Store stream_capture in STREAMS *before* starting capture. VERY IMPORTANT
+    STREAMS[stream_capture.id] = stream_capture
+    try:
+        stream_capture.start_capture()
+    except Exception as exc:
+        # You can retry the task here if you want.
+        # raise self.retry(exc=exc, countdown=5)  # Retry in 5 seconds (example)
+        return  # Or just return without retrying
+
+    return stream_capture.id  # Return the stream ID

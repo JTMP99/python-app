@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-# Install system dependencies
+# Install system dependencies, INCLUDING redis-server
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     wget \
@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     libgconf-2-4 \
     chromium \
     chromium-driver \
+    redis-server \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -38,19 +39,21 @@ ENV PYTHONUNBUFFERED=1 \
     GOOGLE_CHROME_BIN=/usr/bin/chromium \
     DISPLAY=:99 \
     DEBUG=False \
-    SECRET_KEY="your-secret-key-change-in-production"  
+    SECRET_KEY="your-secret-key-change-in-production" \
+    BROKER_URL="redis://localhost:6379/0"
 
 # Start Xvfb virtual display (in the background)
 RUN Xvfb :99 -screen 0 1920x1080x24 &
 
 EXPOSE 8080
 
-# Use gunicorn for production deployment.  Adjust workers/threads as needed.
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", \
-    "--workers", "1", \
-    "--threads", "2", \
-    "--timeout", "120", \
-    "--access-logfile", "-", \
-    "--error-logfile", "-", \
-    "--log-level", "debug", \
-    "run:app"]
+# Start Redis (in the background) BEFORE starting Gunicorn
+CMD redis-server & \
+    gunicorn --bind "0.0.0.0:8080" \
+    --workers "1" \
+    --threads "2" \
+    --timeout "120" \
+    --access-logfile "-" \
+    --error-logfile "-" \
+    --log-level "debug" \
+    "run:app"
