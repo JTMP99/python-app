@@ -54,7 +54,7 @@ class CaptureMetrics(db.Model):
     __tablename__ = 'capture_metrics'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    capture_id = Column(UUID(as_uuid=True), nullable=False)
+    capture_id = Column(UUID(as_uuid=True), ForeignKey('stream_captures.id'), nullable=False)
     timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
     cpu_usage = Column(Integer)
     memory_usage = Column(Integer)
