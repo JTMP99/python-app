@@ -1,5 +1,5 @@
 import subprocess
-import threading
+import threading  # Used, but not explicitly in this snippet. Good practice to keep.
 import time
 import uuid
 import json
@@ -8,27 +8,27 @@ import logging
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By  # Not directly used, but good for more complex selectors
+from selenium.webdriver.support.ui import WebDriverWait  # Not used, but good for dynamic content
+from selenium.webdriver.support import expected_conditions as EC  # Not used, but good for dynamic content
 from selenium.webdriver.common.action_chains import ActionChains
 import random
 import tempfile
 import shutil
-from app.config import Config
+from app.config import Config  # Assuming this is a Flask config object
 
 # Ensure directories exist
 os.makedirs("/app/logs", exist_ok=True)
 os.makedirs("/app/captures", exist_ok=True)
 
 # Configure logging using Config class
-LOG_FILE = Config.LOG_FILE
+LOG_FILE = Config.LOG_FILE  # Good practice to get log file from config
 
 logging.basicConfig(
     filename=LOG_FILE,
-    level=logging.DEBUG,
+    level=logging.DEBUG,  # DEBUG level is good for development, consider INFO for production
     format="%(asctime)s - %(levelname)s - %(message)s",
-    filemode="a"
+    filemode="a"  # Append mode is generally a good idea
 )
 
 class StreamCapture:
@@ -37,19 +37,19 @@ class StreamCapture:
         self.id = str(uuid.uuid4())
         self.capture_dir = f"/app/captures/{self.id}"
         self.debug_dir = f"{self.capture_dir}/debug"
-        
+
         # Create a unique temporary directory for Chrome user data
         self.user_data_dir = tempfile.mkdtemp()
-        
+
         # File paths
         self.video_file = f"{self.capture_dir}/video.mp4"
         self.metadata_file = f"{self.capture_dir}/metadata.json"
         os.makedirs(self.debug_dir, exist_ok=True)
 
         # Capture state
-        self.process = None
+        self.process = None  # FFmpeg process
         self.capturing = False
-        self.driver = None
+        self.driver = None  # Selenium WebDriver instance
         self.start_time = None
         self.end_time = None
 
@@ -63,7 +63,7 @@ class StreamCapture:
             "status": "initialized",
             "video_path": self.video_file,
             "errors": [],
-            "page_analysis": {},
+            "page_analysis": {},  # Placeholder for page analysis results
             "debug_screenshots": []
         }
         self._save_metadata()
@@ -74,14 +74,14 @@ class StreamCapture:
 
             chrome_options = Options()
             chrome_options.add_argument(f'--user-data-dir={self.user_data_dir}')
-            chrome_options.add_argument('--headless')
-            chrome_options.add_argument('--no-sandbox')
-            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--headless')  # Run Chrome in headless mode
+            chrome_options.add_argument('--no-sandbox')  # Necessary for Docker
+            chrome_options.add_argument('--disable-dev-shm-usage') # Overcome limited resource problems
             chrome_options.add_argument('--disable-blink-features=AutomationControlled')
             chrome_options.add_argument('--disable-infobars')
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
-            chrome_options.binary_location = Config.GOOGLE_CHROME_BIN
+            chrome_options.binary_location = Config.GOOGLE_CHROME_BIN  # Get Chrome path from config
 
             # Randomize window size
             width = random.randint(1800, 1920)
@@ -108,26 +108,31 @@ class StreamCapture:
                             });
                         '''
                     })
+                    # Introduce small, random mouse movements.
                     actions = ActionChains(self.driver)
                     actions.move_by_offset(random.randint(10, 50), random.randint(10, 50))
                     actions.perform()
+
                     self.driver.get(self.stream_url)
-                    self.check_for_bot_detection()
-                    time.sleep(random.uniform(3, 5))
+                    self.check_for_bot_detection()  # Call bot detection check
+                    time.sleep(random.uniform(3, 5))  # Wait a random time
+
                     if attempt > 0:
                         logging.info(f"Successfully connected on attempt {attempt + 1}")
-                    break
+                    break  # Exit loop if successful
                 except Exception as e:
                     logging.error(f"Attempt {attempt + 1} failed: {e}")
                     if attempt < max_retries - 1:
-                        wait_time = retry_delay * (2 ** attempt)
+                        wait_time = retry_delay * (2 ** attempt) # Exponential backoff
                         time.sleep(wait_time)
                     else:
-                        raise
-            return True
+                        raise  # Re-raise the exception after all retries
+
+            return True # Indicate successful setup
         except Exception as e:
             logging.exception("Selenium setup error")
             self.metadata["errors"].append(f"Selenium setup error: {str(e)}")
+            # Clean up if setup fails
             if self.driver:
                 try:
                     self.driver.quit()
@@ -155,40 +160,44 @@ class StreamCapture:
 
             command = [
                 "ffmpeg",
-                "-f", "x11grab",
-                "-video_size", "1920x1080",
-                "-i", os.getenv("DISPLAY", ":99"),
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-t", "60",
-                self.video_file
+                "-f", "x11grab",  # Input format for X11 screen grabbing
+                "-video_size", "1920x1080",  # Capture size (match or exceed window size)
+                "-i", os.getenv("DISPLAY", ":99"),  # Display to capture from (defaults to :99)
+                "-c:v", "libx264",  # Video codec (H.264)
+                "-preset", "ultrafast",  # Encoding preset (balance speed/quality)
+                "-t", "60", # Added timeout
+                "-c:a", "aac",  # Add audio codec
+                "-ac", "2",      # Stereo audio
+                self.video_file  # Output file
             ]
 
             logging.debug(f"Running FFmpeg command: {' '.join(command)}")
             self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
+            # Monitor the FFmpeg process. Wait for it to finish, or for a timeout
             start_wait = time.time()
-            while time.time() - start_wait < 65:
-                if self.process.poll() is not None:
-                    break
+            while time.time() - start_wait < 65:  # Check for up to 65 seconds
+                if self.process.poll() is not None:  # Check if process has terminated
+                    break  # Exit loop if FFmpeg has finished/failed
                 time.sleep(1)
                 self._update_metadata(duration=int(time.time() - start_wait))
 
             self.take_debug_screenshot("final_state")
 
-            if self.process.poll() is not None:
+            if self.process.poll() is not None:  # Process terminated
                 stdout, stderr = self.process.communicate()
                 logging.debug(f"FFmpeg stdout: {stdout.decode() if stdout else ''}")
                 if stderr:
                     logging.error(f"FFmpeg stderr: {stderr.decode()}")
                     self.metadata["errors"].append(f"FFmpeg error: {stderr.decode()}")
 
+
         except Exception as e:
             logging.exception("Error during stream capture")
             self.metadata["errors"].append(f"Capture error: {str(e)}")
             self.metadata["status"] = "failed"
             self._save_metadata()
-            self.stop_capture()
+            self.stop_capture()  # Ensure resources are released
 
     def stop_capture(self) -> None:
         """Stop capturing with enhanced termination and cleanup"""
@@ -206,6 +215,7 @@ class StreamCapture:
                     if stderr:
                         logging.debug(f"FFmpeg stderr on stop: {stderr.decode()}")
 
+
             # Quit Selenium driver and take a screenshot before quitting
             if self.driver:
                 self.take_debug_screenshot("before_quit")
@@ -219,6 +229,7 @@ class StreamCapture:
                 shutil.rmtree(self.user_data_dir, ignore_errors=True)
                 logging.info(f"Deleted temporary user data directory: {self.user_data_dir}")
                 self.user_data_dir = None  # Reset to avoid reuse
+
 
             # Update capture state and metadata
             self.capturing = False
@@ -239,6 +250,7 @@ class StreamCapture:
             self.metadata["errors"].append(f"Stop error: {str(e)}")
             self.metadata["status"] = "failed"
             self._save_metadata()
+            # Clean up even on error
             if self.driver:
                 try:
                     self.driver.quit()
@@ -247,11 +259,12 @@ class StreamCapture:
             if self.user_data_dir and os.path.exists(self.user_data_dir):
                 shutil.rmtree(self.user_data_dir, ignore_errors=True)
 
+
     def _save_metadata(self):
         """Save metadata to file"""
         try:
             with open(self.metadata_file, 'w') as f:
-                json.dump(self.metadata, f, indent=2, default=str)
+                json.dump(self.metadata, f, indent=2, default=str)  # Use default=str for serialization
             logging.debug(f"Metadata saved for {self.id}")
         except Exception as e:
             logging.error(f"Failed to save metadata: {e}")
@@ -265,7 +278,6 @@ class StreamCapture:
         """Get capture status"""
         return self.metadata
 
-    # Placeholder for methods assumed to exist based on usage
     def take_debug_screenshot(self, name: str):
         """Take a screenshot for debugging (implementation assumed)"""
         try:
@@ -275,6 +287,7 @@ class StreamCapture:
             logging.debug(f"Screenshot saved: {screenshot_path}")
         except Exception as e:
             logging.error(f"Failed to take screenshot: {e}")
+
 
     def check_for_bot_detection(self):
         """Check for bot detection (implementation assumed)"""
