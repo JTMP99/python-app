@@ -1,3 +1,4 @@
+# app/__init__.py
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -12,11 +13,11 @@ def create_app(config_class=Config):
 
     # Initialize extensions
     db.init_app(app)
-    with app.app_context():
-        db.drop_all()
-        db.create_all()
-    
     migrate.init_app(app, db)
+
+    with app.app_context():
+        # Create all tables. In production, use migrations instead
+        db.create_all()
 
     # Import blueprints
     from app.streaming import streaming_bp

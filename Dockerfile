@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-# Install system dependencies, INCLUDING redis-server
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     wget \
@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
     libgconf-2-4 \
     chromium \
     chromium-driver \
-    redis-server \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -26,9 +26,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create captures directory (and logs, as per config.py)
+# Create directories
 RUN mkdir -p /app/captures && chmod 777 /app/captures
-RUN mkdir -p /app/logs
+RUN mkdir -p /app/logs && chmod 777 /app/logs
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -38,22 +38,19 @@ ENV PYTHONUNBUFFERED=1 \
     FLASK_DEBUG=0 \
     GOOGLE_CHROME_BIN=/usr/bin/chromium \
     DISPLAY=:99 \
-    DEBUG=False \
-    SECRET_KEY="your-secret-key-change-in-production" \
-    BROKER_URL="redis://localhost:6379/0"
+    DEBUG=False
 
-# Start Xvfb virtual display (in the background)
+# Start Xvfb virtual display
 RUN Xvfb :99 -screen 0 1920x1080x24 &
 
 EXPOSE 8080
 
-# Start Redis (in the background) BEFORE starting Gunicorn
-CMD redis-server & \
-    gunicorn --bind "0.0.0.0:8080" \
-    --workers "1" \
-    --threads "2" \
-    --timeout "120" \
-    --access-logfile "-" \
-    --error-logfile "-" \
-    --log-level "debug" \
-    "run:app"
+# Start Gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", \
+     "--workers", "1", \
+     "--threads", "2", \
+     "--timeout", "120", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-", \
+     "--log-level", "debug", \
+     "run:app"]
