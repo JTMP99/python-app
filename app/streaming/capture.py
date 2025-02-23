@@ -8,40 +8,76 @@ from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.common.by import By  # Import By for element selection
+from selenium.webdriver.common.by import By  # Import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import random
 import tempfile
 import shutil
-import requests  # For pre-flight connection check
+import requests
 from app.config import Config  # Import the Config class
+# from app import celery, STREAMS  <- NO, task is in __init__.py now
+from app.services.capture_service import CaptureService  # Import service
+from typing import Optional, Dict, Any, List
 
-# We're NOT using Celery, so no Celery imports
 
-# STREAMS is now managed by the Flask app, so import it at the top-level
-from streams import STREAMS
+# Ensure /app/captures exists (created in Dockerfile, but good to be sure)
+os.makedirs("/app/captures", exist_ok=True)
 
+
+class CaptureError(Exception):
+    """Base exception for capture-related errors"""
+    pass
+
+class SeleniumSetupError(CaptureError):
+    """Raised when Selenium setup fails"""
+    pass
+
+class FFmpegError(CaptureError):
+    """Raised when FFmpeg operations fail"""
+    pass
 
 
 class StreamCapture:
-    def __init__(self, stream_url: str):
+    CAPTURE_BASE_DIR = "/app/captures"
+    FFMPEG_TIMEOUT = 65
+    RETRY_MAX_ATTEMPTS = 3
+    RETRY_DELAY = 2
+    BOT_DETECTION_PHRASES = [
+        "bot detection", 
+        "access denied", 
+        "are you a human", 
+        "please wait", 
+        "not human"
+    ]
+
+    def __init__(self, stream_url: str, capture_id: Optional[str] = None) -> None:
+        """Initialize a new StreamCapture instance.
+        
+        Args:
+            stream_url (str): URL of the stream to capture
+            capture_id (Optional[str]): Existing capture ID to load
+        """
         self.stream_url = stream_url
-        self.id = str(uuid.uuid4())  # Unique ID for each capture
-        self.capture_dir = f"/app/captures/{self.id}"  # Main capture directory
-        self.debug_dir = f"{self.capture_dir}/debug"  # Debug screenshots
-        self.temp_dir = tempfile.mkdtemp(prefix="streamcapture_") # Temp dir
-        self.user_data_dir = os.path.join(self.temp_dir, "chrome-data")  # Chrome user data
+        #If we are passed a capture ID, this is an existing stream.  Load it.
+        if capture_id:
+            self.id = capture_id
+            self._load_metadata()
+        else:
+            self.id = str(uuid.uuid4()) # Generate new UUID
+            self._create_metadata() # Create metadata.
+
+
+        self.capture_dir = f"/app/captures/{self.id}"
+        self.debug_dir = f"{self.capture_dir}/debug"
+
+        # Create a unique temporary directory for Chrome user data
+        self.user_data_dir = tempfile.mkdtemp()
 
         # File paths
-        self.video_file = os.path.join(self.capture_dir, "video.mp4")
-        self.metadata_file = os.path.join(self.capture_dir, "metadata.json")
-
-        # Ensure directories exist
-        os.makedirs(self.capture_dir, exist_ok=True)
-        os.makedirs(self.debug_dir, exist_ok=True)  # Debug directory
-        os.makedirs(self.user_data_dir, exist_ok=True)  # User data directory
-
+        self.video_file = f"{self.capture_dir}/video.mp4"
+        self.metadata_file = f"{self.capture_dir}/metadata.json" # Still useful for storing specific things
+        os.makedirs(self.debug_dir, exist_ok=True)
 
         # Capture state
         self.process = None  # FFmpeg process
@@ -51,274 +87,263 @@ class StreamCapture:
         self.end_time = None
 
         # Initialize metadata.  Store *everything* we might need.
-        self.metadata = {
-            "id": self.id,
-            "stream_url": stream_url,
-            "start_time": None,
-            "end_time": None,
-            "duration": None,
-            "status": "initialized",  # Initial status
-            "video_path": self.video_file,
-            "errors": [],
-            "page_analysis": {},  # Placeholder for page analysis (future)
-            "debug_screenshots": []  # List of screenshot paths
-        }
-        self._save_metadata()  # Save initial metadata
+        #self.metadata = { # We don't need to manage this here any more.
+        #    "id": self.id,
+        #    "stream_url": stream_url,
+        #    "start_time": None,
+        #    "end_time": None,
+        #    "duration": None,
+        #    "status": "initialized",
+        #    "video_path": self.video_file,
+        #    "errors": [],
+        #   "page_analysis": {},  # Placeholder for page analysis results
+        #    "debug_screenshots": []
+        #}
+        #self._save_metadata() # No longer save metadata to a file.
 
 
+    def _create_metadata(self):
+      """Creates a new StreamCapture in the database."""
+      self.db_capture = CaptureService.create_capture(self.stream_url)
+      if not self.db_capture:
+        raise Exception("Failed to create capture in database")
+      # Ensure the capture id is consistent.
+      self.id = str(self.db_capture.id)
 
-    def validate_connection(self):
-        """Pre-check connection before starting selenium"""
-        try:
-            # First try a simple HEAD request
-            response = requests.head(self.stream_url,
-                                     timeout=10,
-                                     allow_redirects=True,
-                                     headers={
-                                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0'
-                                     })
-
-            if response.status_code == 524:  # Cloudflare timeout
-                time.sleep(5)  # Wait before retry
-                response = requests.head(self.stream_url,
-                                        timeout=30,  # Longer timeout
-                                        allow_redirects=True)
-
-            if response.status_code >= 400:
-                self.metadata["errors"].append(f"HTTP error: {response.status_code}")
-                return False
-
-            return True
-        except Exception as e:
-            self.metadata["errors"].append(f"Connection error: {str(e)}")
-            return False
+    def _load_metadata(self):
+        """Loads metadata from database."""
+        self.db_capture = CaptureService.get_capture(self.id)
+        if not self.db_capture:
+            raise Exception(f"Capture with id {self.id} not found")
+        # Load any other required data from db_capture, like the created timestamp:
+        #self.metadata = self.db_capture.to_dict() #NO longer need a local copy.
 
 
-    def setup_selenium(self):
-        """Sets up the Selenium WebDriver with appropriate options."""
+    def setup_selenium(self) -> bool:
         try:
             logging.info(f"Using temporary user data directory: {self.user_data_dir}")
 
             chrome_options = Options()
             chrome_options.add_argument(f'--user-data-dir={self.user_data_dir}')
             chrome_options.add_argument('--headless')  # Run Chrome in headless mode
-            chrome_options.add_argument('--no-sandbox')  # Necessary in Docker
+            chrome_options.add_argument('--no-sandbox')  # Necessary for Docker
             chrome_options.add_argument('--disable-dev-shm-usage') # Overcome limited resource problems
             chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-            chrome_options.add_argument('--disable-infobars')  # Disable info bars
-            chrome_options.add_argument('--ignore-certificate-errors') # Insecure, but useful for testing
-            chrome_options.add_argument('--disable-web-security') # ONLY for trusted sources.  DANGEROUS.
-            chrome_options.add_argument('--allow-running-insecure-content') # DANGEROUS
-            chrome_options.binary_location = Config.GOOGLE_CHROME_BIN
+            chrome_options.add_argument('--disable-infobars')
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
+            chrome_options.binary_location = Config.GOOGLE_CHROME_BIN  # Get Chrome path from config
 
-            # Randomize window size (within reasonable bounds)
-            width = random.randint(1280, 1920)  # Reduced min width
-            height = random.randint(720, 1080)   # Reduced min height
+            # Randomize window size
+            width = random.randint(1800, 1920)
+            height = random.randint(1000, 1080)
             chrome_options.add_argument(f'--window-size={width},{height}')
 
-            # Rotate user agents (add more as needed)
+            # Add realistic user agent
             user_agents = [
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
                 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
             ]
             chrome_options.add_argument(f'--user-agent={random.choice(user_agents)}')
 
-
-            # Set up retries for connection issues
             max_retries = 3
-            retry_delay = 2  # seconds
+            retry_delay = 2
 
             for attempt in range(max_retries):
                 try:
                     self.driver = webdriver.Chrome(options=chrome_options)
-
-                     # Additional stealth techniques
                     self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
                         'source': '''
                             Object.defineProperty(navigator, 'webdriver', {
                                 get: () => undefined
                             });
-                            Object.defineProperty(navigator, 'plugins', {
-                                get: () => [1, 2, 3, 4, 5]
-                            });
-                            window.chrome = { runtime: {} };
                         '''
                     })
-
-                    # Set some extra headers to look less like a bot
-                    self.driver.execute_cdp_cmd('Network.setExtraHTTPHeaders', {
-                        'headers': {
-                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                            'Accept-Language': 'en-US,en;q=0.5',
-                            'Accept-Encoding': 'gzip, deflate, br',
-                            'Connection': 'keep-alive',
-                            'Upgrade-Insecure-Requests': '1'
-                        }
-                    })
-                    self.driver.execute_cdp_cmd('Network.enable', {})  # Enable network events
-                    self.driver.set_page_load_timeout(30) #timeout
-
                     # Introduce small, random mouse movements.
                     actions = ActionChains(self.driver)
                     actions.move_by_offset(random.randint(10, 50), random.randint(10, 50))
                     actions.perform()
 
-
                     self.driver.get(self.stream_url)
-                    self.take_debug_screenshot("initial_load") #Take screenshot
-                    if self.check_for_blocks():  # Check for bot detection
-                        raise Exception("Access blocked") # Raise a generic exception
+                    self.check_for_bot_detection()  # Call bot detection check
+                    time.sleep(random.uniform(3, 5))  # Wait a random time
 
-                    time.sleep(random.uniform(3, 5)) # wait
-                    break # Success
-
+                    if attempt > 0:
+                        logging.info(f"Successfully connected on attempt {attempt + 1}")
+                    break  # Exit loop if successful
                 except Exception as e:
                     logging.error(f"Attempt {attempt + 1} failed: {e}")
-                    self.take_debug_screenshot(f"error_attempt_{attempt}")
                     if attempt < max_retries - 1:
-                        time.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
+                        wait_time = retry_delay * (2 ** attempt) # Exponential backoff
+                        time.sleep(wait_time)
                     else:
-                        raise  # Re-raise exception after max retries
+                        raise  # Re-raise the exception after all retries
 
-            return True # Setup successful
-
+            return True # Indicate successful setup
         except Exception as e:
             logging.exception("Selenium setup error")
-            self.metadata["errors"].append(f"Selenium setup error: {str(e)}")
-            self.cleanup() #Clean up.
+            CaptureService.update_capture_status(self.id, "failed", f"Selenium setup error: {str(e)}")
+            self.cleanup()
             return False
 
-    def check_for_blocks(self):
-        """Checks for common bot detection mechanisms (placeholders)"""
+    def check_for_bot_detection(self) -> bool:
+        """Check for common bot detection mechanisms."""
         try:
             # Check for reCAPTCHA
             if self.driver.find_elements(By.TAG_NAME, 'iframe[src*="recaptcha"]'):
-                self.metadata["errors"].append("reCAPTCHA detected")
-                return True  # Or some other signal
+                CaptureService.update_capture_status(self.id, "failed", "reCAPTCHA detected")
+                logging.warning("reCAPTCHA detected")
+                return True
 
             # Check for Cloudflare's "I'm Under Attack Mode" (IUAM)
             if "I'm Under Attack Mode" in self.driver.title:
-                self.metadata["errors"].append("Cloudflare IUAM detected")
+                CaptureService.update_capture_status(self.id, "failed", "Cloudflare IUAM detected")
+                logging.warning("Cloudflare IUAM detected")
                 return True
             
             #Check for a button with id="challenge-running"
             if self.driver.find_elements(By.ID, 'challenge-running'):
-                self.metadata["errors"].append("Detected element with id='challenge-running'")
+                CaptureService.update_capture_status(self.id, "failed", "Detected element with id='challenge-running'")
                 return True
 
             # Check for a div with id="cf-challenge-running"
             if self.driver.find_elements(By.ID, "cf-challenge-running"):
-                self.metadata["errors"].append("Cloudflare challenge detected (cf-challenge-running)")
+                CaptureService.update_capture_status(self.id, "failed", "Cloudflare challenge detected (cf-challenge-running)")
+                logging.warning("Cloudflare challenge detected (cf-challenge-running)")
                 return True
 
-            # Add more checks here, based on common patterns.  This is an
-            # ongoing process; you'll need to adapt to the specific sites
-            # you're targeting.
+            # Generic check for common bot detection strings
+            for phrase in ["bot detection", "access denied", "are you a human", "please wait", "not human"]:
+                if phrase in self.driver.page_source.lower():
+                    CaptureService.update_capture_status(self.id, "failed", f"Bot detection phrase found: {phrase}")
+                    logging.warning(f"Bot detection phrase found: {phrase}")
+                    return True
 
-            return False  # No blocking detected (so far)
+            return False  # No bot detection found (so far)
         except Exception as e:
-            logging.error(f"Error during block check: {e}")
-            return True #Treat errors as blocks
+            logging.exception("Error during bot detection check")
+            CaptureService.update_capture_status(self.id, "failed", f"Bot detection check error: {str(e)}")
+            return True  # Treat errors as potential blocking
+        
+    def validate_connection(self) -> bool:
+        """Pre-check connection before starting selenium"""
+        try:
+            # First try a simple HEAD request
+            response = requests.head(self.stream_url,
+                                        timeout=10,
+                                        allow_redirects=True,
+                                        headers={
+                                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36'
+                                        })
+
+            if response.status_code == 524:  # Cloudflare timeout
+                logging.warning("Cloudflare timeout (524) on initial HEAD request. Retrying...")
+                time.sleep(5)  # Wait before retry
+                response = requests.head(self.stream_url,
+                                        timeout=30,  # Longer timeout
+                                        allow_redirects=True)
+
+            if response.status_code >= 400:
+                CaptureService.update_capture_status(self.id, 'failed', error=f"HTTP Error: {response.status_code}")
+                return False
+
+            return True
+        except requests.exceptions.RequestException as e:
+            logging.exception(f"Connection error: {e}")
+            CaptureService.update_capture_status(self.id, 'failed', error=f"Connection error: {e}")
+            return False
+        except Exception as e: #Catch any other exceptions
+            logging.exception(f"An unexpected error occurred: {e}")
+            CaptureService.update_capture_status(self.id, "failed", f"An unexpected error occurred: {e}")
+            return False
 
     def start_capture(self):
-        """Starts the video capture process."""
+        """Start capturing video"""
         try:
-
             if not self.validate_connection():
-                 self._update_status("failed", "Connection validation failed")
-                 return
+                CaptureService.update_capture_status(self.id, "failed", "Connection validation failed")
+                return
 
             time.sleep(3)
 
             if not self.setup_selenium():
-                self._update_status("failed", "Setup failed")
+                CaptureService.update_capture_status(self.id, "failed", "Selenium setup failed")
                 return
 
             self.start_time = datetime.now()
             self.capturing = True
-            self._update_status("capturing") # update metadata
-            self.metadata["start_time"] = self.start_time.isoformat()
+            CaptureService.update_capture_status(self.id, "capturing", start_time=self.start_time)
+            logging.info(f"Capture started for {self.stream_url}")
 
-            # FFmpeg command (simplified for now, adjust as needed)
-            command = [
-                "ffmpeg",
-                "-f", "x11grab",  # Input format (X11 screen grabbing)
-                "-video_size", "1280x720", # Example size
-                "-framerate", "15", # Lower framerate
-                "-i", os.getenv("DISPLAY", ":99"), # Get display
-                "-c:v", "libx264", # Video codec
-                "-preset", "ultrafast", # Balance of speed and quality
-                "-tune", "zerolatency", #For low-latency
-                "-t", "60", #Timeout
-                self.video_file #Output file
-            ]
-            logging.info(f"Running FFmpeg command: {' '.join(command)}") #log
+            command = self._build_ffmpeg_command()
+            logging.debug(f"Running FFmpeg command: {' '.join(command)}")
             self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-            # Monitor the FFmpeg process, but don't block *indefinitely*.
+            # Monitor the FFmpeg process.
             start_wait = time.time()
-            while time.time() - start_wait < 65:  # Wait slightly longer than FFmpeg timeout
+            while time.time() - start_wait < 65:
                 if self.process.poll() is not None:
-                    break  # FFmpeg process finished (or crashed)
-                if int(time.time()-start_wait) % 10 == 0:
-                    self.take_debug_screenshot(f"progress_{int(time.time() - start_wait)}")
-                time.sleep(1) # check every second
-                self._update_metadata(duration=int(time.time() - start_wait))
+                    break
+                time.sleep(1)
+                CaptureService.update_capture_metadata(self.id, duration=int(time.time() - start_wait))
 
             self.take_debug_screenshot("final_state")
 
-            # Check if FFmpeg exited cleanly
             if self.process.poll() is not None:
-                stdout, stderr = self.process.communicate() # Get the output
+                stdout, stderr = self.process.communicate()
+                logging.debug(f"FFmpeg stdout: {stdout.decode() if stdout else ''}")
                 if stderr:
                     logging.error(f"FFmpeg stderr: {stderr.decode()}")
-                    self.metadata["errors"].append(f"FFmpeg error: {stderr.decode()}")
+                    CaptureService.update_capture_status(self.id, "failed", error=f"FFmpeg error: {stderr.decode()}")
 
-            # check and make sure the file was created
             if not os.path.exists(self.video_file):
-                raise Exception("Video file not created") #Raise if file not made
+                raise Exception("Video file not created")
+
+            # If we get here, the capture was likely successful
+            self.end_time = datetime.now()
+            duration = (self.end_time - self.start_time).total_seconds()
+            CaptureService.update_capture_status(self.id, 'completed', end_time = self.end_time, duration = int(duration))
 
 
         except Exception as e:
-            logging.exception("Error during stream capture")  # Detailed error logging
-            self._update_status("failed", str(e))
-            self.cleanup()
+            logging.exception("Error during stream capture")
+            CaptureService.update_capture_status(self.id, "failed", error=f"Capture error: {str(e)}")
+            self.cleanup() #Clean up
+
 
     def stop_capture(self):
-        """Stops the capture and cleans up resources."""
+        """Stop capturing with enhanced termination and cleanup"""
         try:
             if self.process and self.process.poll() is None:
                 self.process.terminate()
                 try:
-                    self.process.wait(timeout=10)  # Give it some time to terminate gracefully
+                    self.process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    self.process.kill()  # Forcefully kill it if it doesn't stop
-                    logging.warning(f"FFmpeg process for capture {self.id} had to be killed.")
+                    self.process.kill()
+                    logging.warning(f"Forced termination of FFmpeg process for capture {self.id}")
                 finally:
                     stdout, stderr = self.process.communicate()
                     if stderr:
                         logging.debug(f"FFmpeg stderr on stop: {stderr.decode()}")
 
-
             if self.driver:
                 self.take_debug_screenshot("before_quit")
-                self.driver.quit()
-                self.driver = None
+                try:
+                    self.driver.quit()
+                except Exception as e:
+                    logging.warning(f"Error quitting Selenium driver: {e}")
 
-            self.cleanup() #Clean up temp files
+            self.cleanup() # Clean up temporary files
 
+            self.capturing = False
             self.end_time = datetime.now()
             duration = (self.end_time - self.start_time).total_seconds() if self.start_time else None
-            self._update_status("completed")
-            self._update_metadata(
-                end_time=self.end_time.isoformat() if self.end_time else None,
-                duration=duration
-                )
+
+            CaptureService.update_capture_status(self.id, "completed", end_time=self.end_time, duration=int(duration))
             logging.info(f"Capture stopped for {self.stream_url}, duration: {duration} seconds")
         except Exception as e:
             logging.exception("Error stopping capture")
-            self._update_status("failed", str(e))
-            self.cleanup()  # Clean up even on error
+            CaptureService.update_capture_status(self.id, "failed", error=f"Stop error: {str(e)}")
 
     def cleanup(self):
         """Clean up resources (driver, temp files)"""
@@ -337,55 +362,67 @@ class StreamCapture:
                 logging.warning(f"Error deleting user data dir: {e}")
             self.user_data_dir = None
 
-        if self.temp_dir and os.path.exists(self.temp_dir):
+        if hasattr(self, 'temp_dir') and self.temp_dir and os.path.exists(self.temp_dir):
             try:
                 shutil.rmtree(self.temp_dir)
                 logging.info(f"Deleted temp directory: {self.temp_dir}")
             except Exception as e:
-                logging.warning(f"Error deleting temp dir: {e}")
+                logging.warning(f"Error deleting tempdir: {e}")
             self.temp_dir = None
 
-
-    def _update_status(self, status: str, error: str = None):
-        """Helper function to update the status and save metadata."""
-        self.metadata["status"] = status
-        if error:
-            self.metadata["errors"].append({"time": datetime.now().isoformat(), "error": error})
-        self._save_metadata()
+    def _save_metadata(self):
+      """Saves metadata using CaptureService."""
+      #No longer use this function, use the database.
+      pass
 
     def _update_metadata(self, **kwargs):
-        """Updates the metadata with provided keyword arguments and saves it."""
-        self.metadata.update(kwargs)
-        self._save_metadata()
-
-    def _save_metadata(self):
-        """Saves the current metadata to the metadata.json file."""
+        """Update metadata using CaptureService"""
         try:
-            with open(self.metadata_file, 'w') as f:
-                json.dump(self.metadata, f, indent=2, default=str)
-            logging.debug(f"Metadata saved for {self.id}")
+            CaptureService.update_capture_metadata(self.id, **kwargs)
         except Exception as e:
-            logging.error(f"Failed to save metadata: {e}")
+            logging.error(f"Error updating metadata: {e}")
 
+    def get_status(self) -> dict:
+        """Get capture status - now from the database"""
+        return CaptureService.get_capture(self.id).to_dict() #Use service layer.
 
-    def get_status(self):
-        """Returns the current metadata."""
-        return self.metadata
 
     def take_debug_screenshot(self, name: str):
-        """Take a debug screenshot"""
+        """Take a screenshot for debugging and add its path to metadata."""
         try:
             if not self.driver:
-                return #Dont take screenshot if driver not running
+                return  # Don't take screenshots if driver isn't running
 
             timestamp = int(time.time())
             filename = f"{timestamp}_{name}.png"
             path = os.path.join(self.debug_dir, filename)
 
             self.driver.save_screenshot(path)
-            self.metadata["debug_screenshots"] = self.metadata.get("debug_screenshots", [])
-            self.metadata["debug_screenshots"].append(path)
-            self._save_metadata()
-
+            #Now we use capture service to add this to the db.
+            CaptureService.update_capture_metadata(self.id, debug_screenshots = self.db_capture.debug_screenshots + [path])
+            logging.debug(f"Screenshot saved: {path}")
         except Exception as e:
             logging.error(f"Screenshot error: {e}")
+
+    def _build_ffmpeg_command(self) -> List[str]:
+        """Build FFmpeg command with current settings"""
+        return [
+            "ffmpeg",
+            "-f", "x11grab",
+            "-video_size", "1920x1080",
+            "-i", os.getenv("DISPLAY", ":99"),
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-t", "60",
+            "-c:a", "aac",
+            "-ac", "2",
+            self.video_file
+        ]
+
+    def __enter__(self):
+        """Support for context manager protocol"""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Ensure cleanup on exit"""
+        self.cleanup()

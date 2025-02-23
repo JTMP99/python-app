@@ -16,7 +16,17 @@
                     <input type="text" id="streamUrl" class="mt-1 block w-full rounded-md border border-gray-300 p-2" required>
                 </div>
                 <div class="flex justify-between items-center">
-                    <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Start Capture</button>
+                    <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600" 
+                            id="submitButton">
+                        Start Capture
+                    </button>
+                    <div id="loadingIndicator" class="hidden">
+                        <svg class="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span class="ml-2">Starting capture...</span>
+                    </div>
                 </div>
             </form>
             <div id="errorMessage" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded my-2 hidden"></div>
@@ -63,16 +73,56 @@
     </div>
 
     <script>
+        class CaptureError extends Error {
+            constructor(message, status) {
+                super(message);
+                this.name = 'CaptureError';
+                this.status = status;
+            }
+        }
+
+        function showError(message, temporary = true) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.classList.remove('hidden');
+            if (temporary) {
+                setTimeout(() => errorDiv.classList.add('hidden'), 5000);
+            }
+        }
+
         let activeStreams = new Set(); // Keep track of active stream IDs
+
+        const POLL_INTERVAL = 2000; // 2 seconds
+        const MAX_RETRIES = 3;
+
+        async function pollCaptureStatus(streamId, retryCount = 0) {
+            if (!activeStreams.has(streamId)) return;
+            
+            try {
+                await updateCaptureElement(streamId);
+                setTimeout(() => pollCaptureStatus(streamId), POLL_INTERVAL);
+            } catch (error) {
+                if (retryCount < MAX_RETRIES) {
+                    setTimeout(() => pollCaptureStatus(streamId, retryCount + 1), 
+                        POLL_INTERVAL * (retryCount + 1));
+                } else {
+                    showError(`Failed to update capture ${streamId}: ${error.message}`);
+                    activeStreams.delete(streamId);
+                }
+            }
+        }
 
         // --- Start a new capture ---
         document.getElementById('captureForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const streamUrl = document.getElementById('streamUrl').value;
-            const errorDiv = document.getElementById('errorMessage');
-            errorDiv.classList.add('hidden');
-
+            const submitButton = document.getElementById('submitButton');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            
             try {
+                submitButton.disabled = true;
+                loadingIndicator.classList.remove('hidden');
+                
+                const streamUrl = document.getElementById('streamUrl').value;
                 const response = await fetch('/streams/start', {
                     method: 'POST',
                     headers: {
@@ -83,28 +133,26 @@
                 });
 
                 if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+                    const errorData = await response.json();
+                    throw new CaptureError(
+                        errorData.error || 'Failed to start capture',
+                        response.status
+                    );
                 }
 
-                const data = await response.json(); // Expecting the StreamCapture data now
-                console.log('Response data (start):', data);
-
-                if (data.id) {
-                    createCaptureElement(data); // Create the element with initial data
-                    activeStreams.add(data.id);  //Add to set
-                    updateCaptureElement(data.id);
-                } else {
-                    throw new Error("Did not receive a stream ID from the server.");
-                }
-
+                const data = await response.json();
+                createCaptureElement(data);
+                activeStreams.add(data.id);
+                pollCaptureStatus(data.id);
+                document.getElementById('streamUrl').value = '';
+                
             } catch (error) {
-                console.error('Error starting capture:', error);
-                errorDiv.textContent = `Error: ${error.message}`;
-                errorDiv.classList.remove('hidden');
+                showError(`Error starting capture: ${error.message}`);
+            } finally {
+                submitButton.disabled = false;
+                loadingIndicator.classList.add('hidden');
             }
         });
-
 
         // --- Create a new capture element ---
         function createCaptureElement(data) {
@@ -211,37 +259,33 @@
 
         // --- Stop capture ---
         async function stopCapture(id) {
-           // Now id could be a task ID *or* a stream ID.  We handle both.
-            console.log("Stopping capture with ID:", id);  // Debug log
+            if (!confirm('Are you sure you want to stop this capture?')) {
+                return;
+            }
 
+            const captureDiv = document.querySelector(`[data-capture-id="${id}"]`);
+            const stopButton = captureDiv.querySelector('.stop-capture');
+            stopButton.disabled = true;
+            stopButton.textContent = 'Stopping...';
 
             try {
                 const response = await fetch('/streams/stop', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ stream_id: id }) // Send stream_id
+                    body: JSON.stringify({ stream_id: id })
                 });
 
-                 const data = await response.json();
-
-                if (response.ok) {
-                    // No need to update, as routes.py deletes
-                    // Find and remove the element
-                    const captureDiv = document.querySelector(`[data-capture-id="${id}"]`);
-                    if (captureDiv) {
-                         captureDiv.remove();
-                         }
-                } else {
-                     throw new Error(data.error || 'Failed to stop capture');
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new CaptureError(data.error || 'Failed to stop capture', response.status);
                 }
 
-
-                // Remove from activeStreams, regardless of whether it's a task ID or stream ID
+                captureDiv.remove();
                 activeStreams.delete(id);
-
-
             } catch (error) {
-                console.error('Error stopping capture:', error);
+                showError(`Error stopping capture: ${error.message}`);
+                stopButton.disabled = false;
+                stopButton.textContent = 'Stop';
             }
         }
 
