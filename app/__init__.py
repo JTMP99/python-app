@@ -12,6 +12,10 @@ def create_app(config_class=Config):
 
     # Initialize extensions
     db.init_app(app)
+    with app.app_context():
+        db.drop_all()
+        db.create_all()
+    
     migrate.init_app(app, db)
 
     # Import blueprints

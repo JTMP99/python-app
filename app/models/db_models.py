@@ -11,7 +11,7 @@ class StreamCapture(db.Model):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     stream_url = Column(String, nullable=False)
     status = Column(String, nullable=False, default='created')
-    metadata = Column(JSON, nullable=False, default=dict)
+    capture_metadata = Column(JSON, nullable=False, default=dict)  # Changed from 'metadata'
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     start_time = Column(DateTime)
@@ -25,7 +25,7 @@ class StreamCapture(db.Model):
             'id': str(self.id),
             'stream_url': self.stream_url,
             'status': self.status,
-            'metadata': self.metadata,
+            'capture_metadata': self.capture_metadata,  # Updated to new name
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
             'start_time': self.start_time.isoformat() if self.start_time else None,
@@ -59,4 +59,4 @@ class CaptureMetrics(db.Model):
     cpu_usage = Column(Integer)
     memory_usage = Column(Integer)
     frame_rate = Column(Integer)
-    metadata = Column(JSON, default=dict)
+    capture_metadata = Column(JSON, default=dict)  # Changed from 'metadata'
