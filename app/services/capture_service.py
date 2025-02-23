@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 from sqlalchemy.exc import SQLAlchemyError
 from app.models.db_models import StreamCapture, CaptureMetrics
@@ -18,7 +18,6 @@ class DatabaseError(CaptureServiceError):
     pass
 
 class CaptureService:
-    # Sync with StreamCapture.VALID_STATUSES
     VALID_STATUSES = {
         'created',
         'initialized',
@@ -69,10 +68,9 @@ class CaptureService:
         status: str, 
         error: Optional[str] = None,
         start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-        duration: Optional[int] = None
+        end_time: Optional[datetime] = None
     ) -> Optional[StreamCapture]:
-        """Updates the status and related timing fields of a StreamCapture record."""
+        """Updates the status of a StreamCapture record."""
         try:
             if status not in CaptureService.VALID_STATUSES:
                 raise ValueError(f"Invalid status: {status}")
@@ -90,8 +88,6 @@ class CaptureService:
                 capture.start_time = start_time
             if end_time:
                 capture.end_time = end_time
-            if duration:
-                capture.duration = duration
                 
             if error:
                 if not capture.errors:
@@ -111,7 +107,7 @@ class CaptureService:
 
     @staticmethod
     def update_capture_metadata(capture_id: str, **kwargs: Any) -> Optional[StreamCapture]:
-        """Updates the metadata for a capture record"""
+        """Updates the metadata for a capture record."""
         try:
             capture = StreamCapture.query.get(capture_id)
             if not capture:
@@ -139,58 +135,6 @@ class CaptureService:
             raise DatabaseError(f"Failed to update capture metadata: {str(e)}")
 
     @staticmethod
-    def stop_capture(capture_id: str) -> bool:
-        """Stops the capture."""
-        try:
-            capture = StreamCapture.query.get(capture_id)
-            if not capture:
-                logging.error(f"Capture not found for stop operation: {capture_id}")
-                raise CaptureNotFoundError(f"Capture {capture_id} not found")
-                
-            capture.status = "stopping"
-            capture.end_time = datetime.utcnow()
-            capture.updated_at = datetime.utcnow()
-            
-            db.session.commit()
-            logging.info(f"Successfully marked capture {capture_id} for stopping")
-            return True
-        except SQLAlchemyError as e:
-            db.session.rollback()
-            logging.error(f"Database error stopping capture: {str(e)}")
-            raise DatabaseError(f"Failed to stop capture: {str(e)}")
-
-    @staticmethod
-    def delete_capture(capture_id: str) -> bool:
-        """Deletes a StreamCapture record from the database."""
-        try:
-            capture = StreamCapture.query.get(capture_id)
-            if capture:
-                db.session.delete(capture)
-                db.session.commit()
-                logging.info(f"Successfully deleted capture: {capture_id}")
-                return True
-            return False
-        except SQLAlchemyError as e:
-            db.session.rollback()
-            logging.error(f"Database error deleting capture: {str(e)}")
-            raise DatabaseError(f"Failed to delete capture: {str(e)}")
-
-    @staticmethod
-    def bulk_delete_captures(capture_ids: List[str]) -> bool:
-        """Deletes multiple StreamCapture records."""
-        try:
-            result = StreamCapture.query.filter(
-                StreamCapture.id.in_(capture_ids)
-            ).delete(synchronize_session=False)
-            db.session.commit()
-            logging.info(f"Successfully bulk deleted {result} captures")
-            return bool(result)
-        except SQLAlchemyError as e:
-            db.session.rollback()
-            logging.error(f"Database error in bulk delete: {str(e)}")
-            raise DatabaseError(f"Failed to bulk delete captures: {str(e)}")
-
-    @staticmethod
     def add_metric(
         capture_id: str,
         cpu_usage: float,
@@ -216,8 +160,8 @@ class CaptureService:
             logging.info(f"Successfully added metrics for capture {capture_id}")
             return True
         except SQLAlchemyError as e:
-            db.session.rollback()
             logging.error(f"Database error adding metric: {str(e)}")
+            db.session.rollback()
             raise DatabaseError(f"Failed to add metric: {str(e)}")
 
     @staticmethod

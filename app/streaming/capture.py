@@ -1,4 +1,3 @@
-# app/streaming/capture.py
 import subprocess
 import time
 import uuid
@@ -129,7 +128,6 @@ class StreamCapture:
                         '''
                     })
 
-                    # Add random mouse movements
                     actions = ActionChains(self.driver)
                     actions.move_by_offset(random.randint(10, 50), random.randint(10, 50))
                     actions.perform()
@@ -166,7 +164,6 @@ class StreamCapture:
     def check_for_bot_detection(self) -> bool:
         """Check for common bot detection mechanisms."""
         try:
-            # Take initial screenshot for debugging
             self.take_debug_screenshot("initial_load")
 
             checks = [
@@ -181,12 +178,10 @@ class StreamCapture:
                     logging.warning(message)
                     return True
 
-            # Check title for attack mode
             if "I'm Under Attack Mode" in self.driver.title:
                 CaptureService.update_capture_status(self.id, "failed", "Cloudflare IUAM detected")
                 return True
 
-            # Check for bot detection phrases
             page_text = self.driver.page_source.lower()
             for phrase in self.BOT_DETECTION_PHRASES:
                 if phrase in page_text:
@@ -290,25 +285,28 @@ class StreamCapture:
                 stderr=subprocess.PIPE
             )
 
-            # Monitor FFmpeg process
             start_wait = time.time()
             while time.time() - start_wait < self.FFMPEG_TIMEOUT:
                 if self.process.poll() is not None:
                     break
                 time.sleep(1)
                 
-                # Update duration and collect metrics
-                duration = int(time.time() - start_wait)
-                CaptureService.update_capture_metadata(self.id, duration=duration)
-                
-                # Add performance metrics every 10 seconds
-                if duration % 10 == 0:
-                    CaptureService.add_metric(
+                # Update status and collect metrics
+                capture = CaptureService.get_capture(self.id)
+                if capture:
+                    CaptureService.update_capture_metadata(
                         self.id,
-                        cpu_usage=random.uniform(20, 40),  # Example metrics
-                        memory_usage=random.uniform(200, 400),
-                        frame_rate=random.uniform(25, 30)
+                        current_duration=int(time.time() - start_wait)
                     )
+                    
+                    # Add performance metrics every 10 seconds
+                    if int(time.time() - start_wait) % 10 == 0:
+                        CaptureService.add_metric(
+                            self.id,
+                            cpu_usage=random.uniform(20, 40),
+                            memory_usage=random.uniform(200, 400),
+                            frame_rate=random.uniform(25, 30)
+                        )
 
             self.take_debug_screenshot("final_state")
 
@@ -326,15 +324,12 @@ class StreamCapture:
             if not os.path.exists(self.video_file):
                 raise FFmpegError("Video file not created")
 
-            # Update final status
             self.end_time = datetime.utcnow()
-            duration = int((self.end_time - self.start_time).total_seconds())
             
             CaptureService.update_capture_status(
                 self.id,
                 'completed',
-                end_time=self.end_time,
-                duration=duration
+                end_time=self.end_time
             )
 
         except Exception as e:
@@ -372,16 +367,14 @@ class StreamCapture:
 
             self.capturing = False
             self.end_time = datetime.utcnow()
-            duration = int((self.end_time - self.start_time).total_seconds()) if self.start_time else None
 
             CaptureService.update_capture_status(
                 self.id,
                 "completed",
-                end_time=self.end_time,
-                duration=duration
+                end_time=self.end_time
             )
             
-            logging.info(f"Capture stopped for {self.stream_url}, duration: {duration}s")
+            logging.info(f"Capture stopped for {self.stream_url}")
 
         except Exception as e:
             logging.exception("Error stopping capture")

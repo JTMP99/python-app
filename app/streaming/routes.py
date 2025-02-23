@@ -1,7 +1,9 @@
+# app/streaming/routes.py
 from flask import request, jsonify, send_from_directory, current_app, send_file
 from app.streaming import streaming_bp
 from app.streaming.capture import StreamCapture
 from app.services.capture_service import CaptureService, CaptureNotFoundError
+from app.models.db_models import CaptureMetrics
 import os
 import logging
 import threading
@@ -49,7 +51,16 @@ def get_status_endpoint(capture_id):
         capture = CaptureService.get_capture_with_metrics(capture_id)
         if not capture:
             return jsonify({"error": "Capture not found"}), 404
-        return jsonify(capture)
+
+        # Get the model instance to calculate duration
+        capture_model = CaptureService.get_capture(capture_id)
+        capture_dict = capture.copy()
+        
+        # Add calculated duration to response
+        if capture_model:
+            capture_dict['duration'] = capture_model.duration
+            
+        return jsonify(capture_dict)
     except Exception as e:
         current_app.logger.exception("Error getting status")
         return jsonify({"error": str(e)}), 500
@@ -58,13 +69,12 @@ def get_status_endpoint(capture_id):
 def stop_capture(capture_id):
     """Stop an active capture"""
     try:
-        # First check if capture exists
-        capture_data = CaptureService.get_capture(capture_id)
-        if not capture_data:
+        capture_model = CaptureService.get_capture(capture_id)
+        if not capture_model:
             return jsonify({"error": "Capture not found"}), 404
             
         # Create new StreamCapture instance from existing data
-        capture = StreamCapture(capture_data.stream_url, capture_id=capture_id)
+        capture = StreamCapture(stream_url=capture_model.stream_url, capture_id=capture_id)
         capture.stop_capture()
         
         # Get final status
@@ -80,22 +90,30 @@ def stop_capture(capture_id):
 def get_debug_info(capture_id):
     """Get comprehensive debug information"""
     try:
-        capture = CaptureService.get_capture_with_metrics(capture_id)
-        if not capture:
+        capture_model = CaptureService.get_capture(capture_id)
+        if not capture_model:
             return jsonify({"error": "Capture not found"}), 404
 
         debug_info = {
-            "id": capture_id,
-            "stream_url": capture.get("stream_url"),
-            "status": capture.get("status"),
-            "duration": capture.get("duration"),
-            "errors": capture.get("errors", []),
-            "capture_metadata": capture.get("capture_metadata", {}),
-            "debug_screenshots": capture.get("screenshot_paths", []),
-            "start_time": capture.get("start_time"),
-            "end_time": capture.get("end_time"),
-            "recent_metrics": capture.get("recent_metrics", [])
+            "id": str(capture_model.id),
+            "stream_url": capture_model.stream_url,
+            "status": capture_model.status,
+            "duration": capture_model.duration,
+            "errors": capture_model.errors or [],
+            "capture_metadata": capture_model.capture_metadata or {},
+            "debug_screenshots": capture_model.screenshot_paths or [],
+            "start_time": capture_model.start_time.isoformat() if capture_model.start_time else None,
+            "end_time": capture_model.end_time.isoformat() if capture_model.end_time else None,
+            "video_path": capture_model.video_path,
+            "video_size": capture_model.video_size
         }
+
+        # Add metrics
+        metrics = CaptureMetrics.query.filter_by(capture_id=capture_id)\
+            .order_by(CaptureMetrics.timestamp.desc())\
+            .limit(10)\
+            .all()
+        debug_info['recent_metrics'] = [m.to_dict() for m in metrics]
 
         return jsonify(debug_info)
     except Exception as e:

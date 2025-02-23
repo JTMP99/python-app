@@ -1,7 +1,7 @@
 # app/models/db_models.py
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey, Float
+from sqlalchemy import Column, String, DateTime, JSON, Integer, Float, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from app import db
 import uuid
@@ -17,14 +17,13 @@ class StreamCapture(db.Model):
     capture_metadata = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
-    start_time = Column(DateTime)
-    end_time = Column(DateTime)
-    duration = Column(Integer)  # Duration in seconds
-    errors = Column(JSON, default=list)
-    video_path = Column(String)
-    video_size = Column(Integer)  # Size in bytes
-    screenshot_paths = Column(JSON, default=list)
-    debug_info = Column(JSON, default=dict)
+    start_time = Column(DateTime, nullable=True)
+    end_time = Column(DateTime, nullable=True)
+    errors = Column(JSON, nullable=False, default=list)
+    video_path = Column(String, nullable=True)
+    video_size = Column(Integer, nullable=True)
+    screenshot_paths = Column(JSON, nullable=False, default=list)
+    debug_info = Column(JSON, nullable=False, default=dict)
     
     metrics = db.relationship('CaptureMetrics', backref='capture', lazy=True,
                             cascade='all, delete-orphan')
@@ -65,13 +64,19 @@ class StreamCapture(db.Model):
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'start_time': self.start_time.isoformat() if self.start_time else None,
             'end_time': self.end_time.isoformat() if self.end_time else None,
-            'duration': self.duration,
             'errors': self.errors,
             'video_path': self.video_path,
             'video_size': self.video_size,
             'screenshot_paths': self.screenshot_paths,
             'debug_info': self.debug_info
         }
+
+    @property
+    def duration(self) -> Optional[int]:
+        """Calculate capture duration in seconds."""
+        if self.start_time and self.end_time:
+            return int((self.end_time - self.start_time).total_seconds())
+        return None
 
     def update_status(self, status: str, error: Optional[str] = None) -> None:
         """Update status and optionally add error."""
@@ -99,13 +104,6 @@ class StreamCapture(db.Model):
             
         self.capture_metadata.update(metadata_updates)
         self.updated_at = datetime.utcnow()
-
-    @property
-    def calculate_duration(self) -> Optional[int]:
-        """Calculate capture duration in seconds."""
-        if self.start_time and self.end_time:
-            return int((self.end_time - self.start_time).total_seconds())
-        return None
 
 class CaptureMetrics(db.Model):
     """Track performance metrics for a capture session."""
