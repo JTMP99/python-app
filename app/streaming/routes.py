@@ -1,26 +1,10 @@
-# app/streaming/routes.py
 from flask import request, jsonify, send_from_directory, current_app, send_file
 from app.streaming import streaming_bp
 from app.streaming.capture import StreamCapture
+from app.services.capture_service import CaptureService, CaptureNotFoundError
 import os
 import logging
-import json
 import threading
-
-def get_capture_path(capture_id):
-    return os.path.join("/app/captures", capture_id)
-
-def get_capture_status(capture_id):
-    """Get status from filesystem"""
-    capture_path = get_capture_path(capture_id)
-    metadata_file = os.path.join(capture_path, "metadata.json")
-    if os.path.exists(metadata_file):
-        try:
-            with open(metadata_file, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            current_app.logger.error(f"Error reading metadata: {e}")
-    return None
 
 @streaming_bp.route("/start", methods=["POST"])
 def start_capture():
@@ -41,7 +25,7 @@ def start_capture():
                 capture.start_capture()
             except Exception as e:
                 current_app.logger.exception(f"Error in capture thread: {e}")
-                capture._update_status("failed", str(e))
+                CaptureService.update_capture_status(capture.id, "failed", str(e))
             
         thread = threading.Thread(target=capture_thread)
         thread.daemon = True
@@ -49,8 +33,8 @@ def start_capture():
 
         # Return immediately with ID
         return jsonify({
-            "id": capture.id,
-            "status": "initializing",
+            "id": str(capture.id),
+            "status": "initialized",
             "stream_url": stream_url
         }), 202
 
@@ -60,12 +44,12 @@ def start_capture():
 
 @streaming_bp.route("/status/<capture_id>", methods=["GET"])
 def get_status_endpoint(capture_id):
-    """Get capture status"""
+    """Get capture status from database"""
     try:
-        status = get_capture_status(capture_id)
-        if not status:
+        capture = CaptureService.get_capture_with_metrics(capture_id)
+        if not capture:
             return jsonify({"error": "Capture not found"}), 404
-        return jsonify(status)
+        return jsonify(capture)
     except Exception as e:
         current_app.logger.exception("Error getting status")
         return jsonify({"error": str(e)}), 500
@@ -74,16 +58,20 @@ def get_status_endpoint(capture_id):
 def stop_capture(capture_id):
     """Stop an active capture"""
     try:
-        status = get_capture_status(capture_id)
-        if not status:
+        # First check if capture exists
+        capture_data = CaptureService.get_capture(capture_id)
+        if not capture_data:
             return jsonify({"error": "Capture not found"}), 404
             
-        # Create new StreamCapture instance from stored metadata
-        capture = StreamCapture.from_metadata(status)
+        # Create new StreamCapture instance from existing data
+        capture = StreamCapture(capture_data.stream_url, capture_id=capture_id)
         capture.stop_capture()
         
-        final_status = get_capture_status(capture_id)
+        # Get final status
+        final_status = CaptureService.get_capture_with_metrics(capture_id)
         return jsonify(final_status)
+    except CaptureNotFoundError:
+        return jsonify({"error": "Capture not found"}), 404
     except Exception as e:
         current_app.logger.exception("Error stopping capture")
         return jsonify({"error": str(e)}), 500
@@ -92,20 +80,21 @@ def stop_capture(capture_id):
 def get_debug_info(capture_id):
     """Get comprehensive debug information"""
     try:
-        status = get_capture_status(capture_id)
-        if not status:
+        capture = CaptureService.get_capture_with_metrics(capture_id)
+        if not capture:
             return jsonify({"error": "Capture not found"}), 404
 
         debug_info = {
             "id": capture_id,
-            "stream_url": status["stream_url"],
-            "status": status["status"],
-            "duration": status.get("duration"),
-            "errors": status.get("errors", []),
-            "page_analysis": status.get("page_analysis", {}),
-            "screenshots": status.get("debug_screenshots", []),
-            "start_time": status.get("start_time"),
-            "end_time": status.get("end_time")
+            "stream_url": capture.get("stream_url"),
+            "status": capture.get("status"),
+            "duration": capture.get("duration"),
+            "errors": capture.get("errors", []),
+            "capture_metadata": capture.get("capture_metadata", {}),
+            "debug_screenshots": capture.get("screenshot_paths", []),
+            "start_time": capture.get("start_time"),
+            "end_time": capture.get("end_time"),
+            "recent_metrics": capture.get("recent_metrics", [])
         }
 
         return jsonify(debug_info)
@@ -117,7 +106,11 @@ def get_debug_info(capture_id):
 def get_screenshot(capture_id, timestamp):
     """Get a specific screenshot"""
     try:
-        debug_dir = os.path.join(get_capture_path(capture_id), "debug")
+        capture = CaptureService.get_capture(capture_id)
+        if not capture:
+            return jsonify({"error": "Capture not found"}), 404
+
+        debug_dir = os.path.join("/app/captures", capture_id, "debug")
         if not os.path.exists(debug_dir):
             return jsonify({"error": "Debug directory not found"}), 404
 
@@ -137,14 +130,14 @@ def get_screenshot(capture_id, timestamp):
 def download(capture_id):
     """Download captured video"""
     try:
-        status = get_capture_status(capture_id)
-        if not status:
+        capture = CaptureService.get_capture(capture_id)
+        if not capture:
             return jsonify({"error": "Capture not found"}), 404
 
-        if status["status"] != "completed":
+        if capture.status != "completed":
             return jsonify({"error": "Capture not completed"}), 400
 
-        video_path = status.get("video_path")
+        video_path = capture.video_path
         if not video_path or not os.path.exists(video_path):
             return jsonify({"error": "Video file not found"}), 404
 

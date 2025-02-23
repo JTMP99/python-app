@@ -1,27 +1,14 @@
 # app/models/db_models.py
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey
+from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey, Float
 from sqlalchemy.dialects.postgresql import UUID
 from app import db
 import uuid
+import logging
 
 class StreamCapture(db.Model):
-    """Model representing a stream capture session.
-    
-    Attributes:
-        id (UUID): Unique identifier for the capture
-        stream_url (str): URL of the stream being captured
-        status (str): Current status of the capture
-        capture_metadata (dict): Additional metadata about the capture
-        created_at (datetime): When the capture was created
-        updated_at (datetime): When the capture was last updated
-        start_time (datetime): When the capture started
-        end_time (datetime): When the capture ended
-        errors (list): List of errors encountered during capture
-        video_path (str): Path to the captured video file
-        video_size (int): Size of the video file in bytes
-    """
+    """Model representing a stream capture session."""
     __tablename__ = 'stream_captures'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -32,112 +19,112 @@ class StreamCapture(db.Model):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     start_time = Column(DateTime)
     end_time = Column(DateTime)
+    duration = Column(Integer)  # Duration in seconds
     errors = Column(JSON, default=list)
     video_path = Column(String)
-    video_size = Column(Integer)
+    video_size = Column(Integer)  # Size in bytes
+    screenshot_paths = Column(JSON, default=list)
+    debug_info = Column(JSON, default=dict)
     
-    metrics = db.relationship('CaptureMetrics', backref='capture', lazy=True)
+    metrics = db.relationship('CaptureMetrics', backref='capture', lazy=True,
+                            cascade='all, delete-orphan')
 
     VALID_STATUSES = {
-        'created',
-        'initialized',
-        'capturing',
-        'stopping',
-        'completed',
-        'failed'
+        'created',        # Initial state when record is created
+        'initialized',    # Capture process has been initialized
+        'capturing',      # Actively capturing
+        'stopping',       # Stop requested
+        'completed',      # Successfully completed
+        'failed'         # Failed with error
     }
 
+    def __init__(self, **kwargs):
+        """Initialize a new StreamCapture instance with validation."""
+        super().__init__(**kwargs)
+        if not self.stream_url:
+            raise ValueError("stream_url cannot be empty")
+        if self.status not in self.VALID_STATUSES:
+            raise ValueError(f"Invalid status: {self.status}")
+        if not self.capture_metadata:
+            self.capture_metadata = {}
+        if not self.errors:
+            self.errors = []
+        if not self.screenshot_paths:
+            self.screenshot_paths = []
+        if not self.debug_info:
+            self.debug_info = {}
+
     def to_dict(self) -> Dict[str, Any]:
-        """Convert the model instance to a dictionary.
-        
-        Returns:
-            Dict[str, Any]: Dictionary representation of the capture
-        """
+        """Convert the model instance to a dictionary."""
         return {
             'id': str(self.id),
             'stream_url': self.stream_url,
             'status': self.status,
             'capture_metadata': self.capture_metadata,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat(),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'start_time': self.start_time.isoformat() if self.start_time else None,
             'end_time': self.end_time.isoformat() if self.end_time else None,
+            'duration': self.duration,
             'errors': self.errors,
             'video_path': self.video_path,
-            'video_size': self.video_size
+            'video_size': self.video_size,
+            'screenshot_paths': self.screenshot_paths,
+            'debug_info': self.debug_info
         }
 
     def update_status(self, status: str, error: Optional[str] = None) -> None:
-        """Update status and optionally add error.
-        
-        Args:
-            status (str): New status value
-            error (Optional[str]): Error message to add
-        """
+        """Update status and optionally add error."""
         if status not in self.VALID_STATUSES:
             raise ValueError(f"Invalid status: {status}")
+            
         self.status = status
         self.updated_at = datetime.utcnow()
         
         if error:
             if not self.errors:
                 self.errors = []
-            self.errors.append({
-                'time': datetime.utcnow().isoformat(),
-                'error': str(error)
-            })
-        
-        db.session.commit()
+            error_entry = {
+                'timestamp': datetime.utcnow().isoformat(),
+                'error': str(error),
+                'previous_status': self.status
+            }
+            self.errors.append(error_entry)
+            logging.error(f"Capture {self.id} error: {error}")
 
     def update_metadata(self, metadata_updates: Dict[str, Any]) -> None:
-        """Update capture metadata.
-        
-        Args:
-            metadata_updates (Dict[str, Any]): New metadata to merge
-        """
+        """Update capture metadata."""
         if not self.capture_metadata:
             self.capture_metadata = {}
+            
         self.capture_metadata.update(metadata_updates)
         self.updated_at = datetime.utcnow()
-        db.session.commit()
 
     @property
-    def duration(self) -> Optional[int]:
-        """Calculate capture duration in seconds.
-        
-        Returns:
-            Optional[int]: Duration in seconds or None if incomplete
-        """
+    def calculate_duration(self) -> Optional[int]:
+        """Calculate capture duration in seconds."""
         if self.start_time and self.end_time:
             return int((self.end_time - self.start_time).total_seconds())
         return None
 
 class CaptureMetrics(db.Model):
-    """Track performance metrics for a capture session.
-    
-    Attributes:
-        id (UUID): Unique identifier for the metric record
-        capture_id (UUID): ID of associated capture
-        timestamp (datetime): When metrics were recorded
-        cpu_usage (int): CPU usage percentage (0-100)
-        memory_usage (int): Memory usage in MB
-        frame_rate (int): Frames per second
-        capture_metadata (dict): Additional metric metadata
-    """
+    """Track performance metrics for a capture session."""
     __tablename__ = 'capture_metrics'
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    capture_id = Column(UUID(as_uuid=True), ForeignKey('stream_captures.id'), nullable=False)
+    capture_id = Column(UUID(as_uuid=True), ForeignKey('stream_captures.id', ondelete='CASCADE'), nullable=False)
     timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
-    cpu_usage = Column(Integer)
-    memory_usage = Column(Integer)
-    frame_rate = Column(Integer)
+    cpu_usage = Column(Float)       # CPU usage percentage (0-100)
+    memory_usage = Column(Float)    # Memory usage in MB
+    frame_rate = Column(Float)      # Frames per second
     capture_metadata = Column(JSON, default=dict)
 
     def __init__(self, **kwargs):
         """Initialize a new CaptureMetrics instance with validation."""
         super().__init__(**kwargs)
         self.validate()
+        if not self.capture_metadata:
+            self.capture_metadata = {}
 
     def validate(self) -> None:
         """Validate metric values."""
@@ -149,15 +136,11 @@ class CaptureMetrics(db.Model):
             raise ValueError("Frame rate cannot be negative")
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert the model instance to a dictionary.
-        
-        Returns:
-            Dict[str, Any]: Dictionary representation of the metrics
-        """
+        """Convert the model instance to a dictionary."""
         return {
             'id': str(self.id),
             'capture_id': str(self.capture_id),
-            'timestamp': self.timestamp.isoformat(),
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
             'cpu_usage': self.cpu_usage,
             'memory_usage': self.memory_usage,
             'frame_rate': self.frame_rate,
@@ -166,9 +149,5 @@ class CaptureMetrics(db.Model):
 
     @property
     def age(self) -> float:
-        """Calculate age of metrics in seconds.
-        
-        Returns:
-            float: Seconds since metrics were recorded
-        """
+        """Calculate age of metrics in seconds."""
         return (datetime.utcnow() - self.timestamp).total_seconds()

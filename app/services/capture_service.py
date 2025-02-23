@@ -18,7 +18,9 @@ class DatabaseError(CaptureServiceError):
     pass
 
 class CaptureService:
+    # Sync with StreamCapture.VALID_STATUSES
     VALID_STATUSES = {
+        'created',
         'initialized',
         'capturing',
         'stopping',
@@ -28,47 +30,38 @@ class CaptureService:
 
     @staticmethod
     def create_capture(stream_url: str) -> Optional[StreamCapture]:
-        """Creates a new StreamCapture record in the database.
-        
-        Args:
-            stream_url (str): URL of the stream to capture
-            
-        Returns:
-            Optional[StreamCapture]: The created capture record or None if failed
-        """
+        """Creates a new StreamCapture record in the database."""
         try:
+            # Create with initial status 'created'
             capture = StreamCapture(
                 stream_url=stream_url,
-                status="initialized",
-                created_at=datetime.utcnow()
+                status="created",
+                created_at=datetime.utcnow(),
+                capture_metadata={},
+                errors=[]
             )
+            logging.info(f"Creating new capture for URL: {stream_url}")
             db.session.add(capture)
             db.session.commit()
-            logging.info(f"Created capture record in DB: {capture.id}")
+            logging.info(f"Successfully created capture: {capture.id}")
             return capture
         except SQLAlchemyError as e:
-            logging.error(f"Database error creating capture: {e}")
+            logging.error(f"Database error creating capture: {str(e)}")
             db.session.rollback()
-            return None
+            raise DatabaseError(f"Failed to create capture: {str(e)}")
 
     @staticmethod
     def get_capture(capture_id: str) -> Optional[StreamCapture]:
-        """Retrieves a StreamCapture record by its ID.
-        
-        Args:
-            capture_id (str): The ID of the capture to retrieve
-            
-        Returns:
-            Optional[StreamCapture]: The found capture or None
-            
-        Raises:
-            DatabaseError: If database query fails
-        """
+        """Retrieves a StreamCapture record by its ID."""
         try:
-            return StreamCapture.query.get(capture_id)
+            capture = StreamCapture.query.get(capture_id)
+            if not capture:
+                logging.warning(f"Capture not found: {capture_id}")
+                raise CaptureNotFoundError(f"Capture {capture_id} not found")
+            return capture
         except SQLAlchemyError as e:
-            logging.error(f"Database error retrieving capture {capture_id}: {e}")
-            raise DatabaseError(f"Failed to retrieve capture: {e}")
+            logging.error(f"Database error retrieving capture {capture_id}: {str(e)}")
+            raise DatabaseError(f"Failed to retrieve capture: {str(e)}")
 
     @staticmethod
     def update_capture_status(
@@ -79,25 +72,20 @@ class CaptureService:
         end_time: Optional[datetime] = None,
         duration: Optional[int] = None
     ) -> Optional[StreamCapture]:
-        """Updates the status and related timing fields of a StreamCapture record.
-        
-        Args:
-            capture_id (str): ID of the capture to update
-            status (str): New status value
-            error (Optional[str]): Error message if any
-            start_time (Optional[datetime]): Capture start time
-            end_time (Optional[datetime]): Capture end time
-            duration (Optional[int]): Capture duration in seconds
-        """
+        """Updates the status and related timing fields of a StreamCapture record."""
         try:
             if status not in CaptureService.VALID_STATUSES:
                 raise ValueError(f"Invalid status: {status}")
 
             capture = StreamCapture.query.get(capture_id)
             if not capture:
-                return None
+                logging.error(f"Capture not found for status update: {capture_id}")
+                raise CaptureNotFoundError(f"Capture {capture_id} not found")
 
+            logging.info(f"Updating capture {capture_id} status to: {status}")
             capture.status = status
+            capture.updated_at = datetime.utcnow()
+
             if start_time:
                 capture.start_time = start_time
             if end_time:
@@ -114,24 +102,21 @@ class CaptureService:
                 })
             
             db.session.commit()
+            logging.info(f"Successfully updated capture {capture_id} status")
             return capture
         except SQLAlchemyError as e:
-            logging.error(f"Database error updating capture status: {e}")
+            logging.error(f"Database error updating capture status: {str(e)}")
             db.session.rollback()
-            return None
+            raise DatabaseError(f"Failed to update capture status: {str(e)}")
 
     @staticmethod
     def update_capture_metadata(capture_id: str, **kwargs: Any) -> Optional[StreamCapture]:
-        """Updates the metadata for a capture record
-        
-        Args:
-            capture_id (str): ID of the capture to update
-            **kwargs: Key-value pairs to update in metadata
-        """
+        """Updates the metadata for a capture record"""
         try:
             capture = StreamCapture.query.get(capture_id)
             if not capture:
-                return None
+                logging.error(f"Capture not found for metadata update: {capture_id}")
+                raise CaptureNotFoundError(f"Capture {capture_id} not found")
 
             if not capture.capture_metadata:
                 capture.capture_metadata = {}
@@ -143,72 +128,67 @@ class CaptureService:
 
             # Update remaining fields in metadata dict
             capture.capture_metadata.update(kwargs)
+            capture.updated_at = datetime.utcnow()
+            
             db.session.commit()
+            logging.info(f"Successfully updated capture {capture_id} metadata")
             return capture
         except SQLAlchemyError as e:
-            logging.error(f"Database error updating capture metadata: {e}")
+            logging.error(f"Database error updating capture metadata: {str(e)}")
             db.session.rollback()
-            return None
+            raise DatabaseError(f"Failed to update capture metadata: {str(e)}")
 
     @staticmethod
     def stop_capture(capture_id: str) -> bool:
-        """Stops the capture.
-        
-        Args:
-            capture_id (str): The ID of the capture to stop
-            
-        Returns:
-            bool: True if stopped successfully
-            
-        Raises:
-            CaptureNotFoundError: If capture doesn't exist
-            DatabaseError: If database operation fails
-        """
+        """Stops the capture."""
         try:
             capture = StreamCapture.query.get(capture_id)
             if not capture:
+                logging.error(f"Capture not found for stop operation: {capture_id}")
                 raise CaptureNotFoundError(f"Capture {capture_id} not found")
                 
             capture.status = "stopping"
             capture.end_time = datetime.utcnow()
+            capture.updated_at = datetime.utcnow()
+            
             db.session.commit()
+            logging.info(f"Successfully marked capture {capture_id} for stopping")
             return True
         except SQLAlchemyError as e:
             db.session.rollback()
-            logging.error(f"Database error stopping capture: {e}")
-            raise DatabaseError(f"Failed to stop capture: {e}")
+            logging.error(f"Database error stopping capture: {str(e)}")
+            raise DatabaseError(f"Failed to stop capture: {str(e)}")
 
     @staticmethod
-    def delete_capture(capture_id):
+    def delete_capture(capture_id: str) -> bool:
         """Deletes a StreamCapture record from the database."""
-        capture = StreamCapture.query.get(capture_id)
-        if capture:
-            db.session.delete(capture)
-            db.session.commit()
+        try:
+            capture = StreamCapture.query.get(capture_id)
+            if capture:
+                db.session.delete(capture)
+                db.session.commit()
+                logging.info(f"Successfully deleted capture: {capture_id}")
+                return True
+            return False
+        except SQLAlchemyError as e:
+            db.session.rollback()
+            logging.error(f"Database error deleting capture: {str(e)}")
+            raise DatabaseError(f"Failed to delete capture: {str(e)}")
 
     @staticmethod
     def bulk_delete_captures(capture_ids: List[str]) -> bool:
-        """Deletes multiple StreamCapture records.
-        
-        Args:
-            capture_ids (List[str]): List of capture IDs to delete
-            
-        Returns:
-            bool: True if all deletions successful
-            
-        Raises:
-            DatabaseError: If database operation fails
-        """
+        """Deletes multiple StreamCapture records."""
         try:
             result = StreamCapture.query.filter(
                 StreamCapture.id.in_(capture_ids)
             ).delete(synchronize_session=False)
             db.session.commit()
+            logging.info(f"Successfully bulk deleted {result} captures")
             return bool(result)
         except SQLAlchemyError as e:
             db.session.rollback()
-            logging.error(f"Database error in bulk delete: {e}")
-            raise DatabaseError(f"Failed to bulk delete captures: {e}")
+            logging.error(f"Database error in bulk delete: {str(e)}")
+            raise DatabaseError(f"Failed to bulk delete captures: {str(e)}")
 
     @staticmethod
     def add_metric(
@@ -217,24 +197,11 @@ class CaptureService:
         memory_usage: float,
         frame_rate: float
     ) -> bool:
-        """Adds a CaptureMetrics record associated with a capture.
-        
-        Args:
-            capture_id (str): The ID of the capture
-            cpu_usage (float): CPU usage percentage
-            memory_usage (float): Memory usage in MB
-            frame_rate (float): Frames per second
-            
-        Returns:
-            bool: True if metric was added successfully
-            
-        Raises:
-            CaptureNotFoundError: If capture doesn't exist
-            DatabaseError: If database operation fails
-        """
+        """Adds a CaptureMetrics record associated with a capture."""
         try:
             capture = StreamCapture.query.get(capture_id)
             if not capture:
+                logging.error(f"Capture not found for adding metrics: {capture_id}")
                 raise CaptureNotFoundError(f"Capture {capture_id} not found")
 
             metric = CaptureMetrics(
@@ -246,28 +213,20 @@ class CaptureService:
             )
             db.session.add(metric)
             db.session.commit()
+            logging.info(f"Successfully added metrics for capture {capture_id}")
             return True
         except SQLAlchemyError as e:
             db.session.rollback()
-            logging.error(f"Database error adding metric: {e}")
-            raise DatabaseError(f"Failed to add metric: {e}")
+            logging.error(f"Database error adding metric: {str(e)}")
+            raise DatabaseError(f"Failed to add metric: {str(e)}")
 
     @staticmethod
     def get_capture_with_metrics(capture_id: str) -> Optional[Dict[str, Any]]:
-        """Retrieves a StreamCapture object with its associated metrics.
-        
-        Args:
-            capture_id (str): ID of the capture to retrieve
-            
-        Returns:
-            Optional[Dict[str, Any]]: Capture data with metrics or None if not found
-            
-        Raises:
-            DatabaseError: If database query fails
-        """
+        """Retrieves a StreamCapture object with its associated metrics."""
         try:
             capture = StreamCapture.query.get(capture_id)
             if not capture:
+                logging.warning(f"Capture not found: {capture_id}")
                 return None
                 
             metrics = (CaptureMetrics.query
@@ -280,5 +239,5 @@ class CaptureService:
             capture_data['recent_metrics'] = [m.to_dict() for m in metrics]
             return capture_data
         except SQLAlchemyError as e:
-            logging.error(f"Database error retrieving capture with metrics: {e}")
-            raise DatabaseError(f"Failed to retrieve capture with metrics: {e}")
+            logging.error(f"Database error retrieving capture with metrics: {str(e)}")
+            raise DatabaseError(f"Failed to retrieve capture with metrics: {str(e)}")
