@@ -261,6 +261,103 @@ class StreamCapture:
             logging.error(f"Error during block check: {e}")
             return True
 
+    # app/streaming/capture.py
+    @classmethod
+    def from_metadata(cls, metadata):
+        """Create instance from stored metadata"""
+        instance = cls(metadata["stream_url"])
+        instance.id = metadata["id"]
+        instance.metadata = metadata
+        return instance
+
+    def __init__(self, stream_url):
+        self.stream_url = stream_url
+        self.id = str(uuid.uuid4())
+        self.base_dir = f"/app/captures/{self.id}"
+        self.setup_directories()
+        
+        self.metadata = {
+            "id": self.id,
+            "stream_url": stream_url,
+            "status": "created",
+            "stage": "init",
+            "errors": [],
+            "stages_completed": [],
+            "start_time": None,
+            "end_time": None
+        }
+        self._save_metadata()
+
+    def setup_directories(self):
+        """Set up directory structure"""
+        os.makedirs(self.base_dir, exist_ok=True)
+        os.makedirs(os.path.join(self.base_dir, "debug"), exist_ok=True)
+        os.makedirs(os.path.join(self.base_dir, "temp"), exist_ok=True)
+
+    def initialize(self):
+        """Staged initialization process"""
+        try:
+            # Stage 1: Connection validation
+            self._update_status("validating_connection")
+            if not self.validate_connection():
+                self._update_status("failed", error="Connection validation failed")
+                return
+
+            # Stage 2: Browser setup
+            self._update_status("setting_up_browser")
+            if not self.setup_selenium():
+                self._update_status("failed", error="Browser setup failed")
+                return
+
+            # Stage 3: Start capture
+            self._update_status("starting_capture")
+            if not self.start_capture():
+                self._update_status("failed", error="Capture start failed")
+                return
+
+            self._update_status("running")
+
+        except Exception as e:
+            self._update_status("failed", error=str(e))
+            self.cleanup()
+
+    def _update_status(self, status, error=None):
+        """Update status and save metadata"""
+        self.metadata["status"] = status
+        self.metadata["last_updated"] = datetime.now().isoformat()
+        
+        if error:
+            self.metadata["errors"].append({
+                "time": datetime.now().isoformat(),
+                "error": error
+            })
+        
+        self._save_metadata()
+
+    def _save_metadata(self):
+        """Save metadata to filesystem"""
+        metadata_file = os.path.join(self.base_dir, "metadata.json")
+        with open(metadata_file, 'w') as f:
+            json.dump(self.metadata, f, indent=2, default=str)
+
+    def cleanup(self):
+        """Clean up resources"""
+        if hasattr(self, 'driver') and self.driver:
+            try:
+                self.driver.quit()
+            except:
+                pass
+        
+        if hasattr(self, 'process') and self.process:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except:
+                try:
+                    self.process.kill()
+                except:
+                    pass
+    
     def start_capture(self) -> None:
         """Start capturing video with pre-validation"""
         try:

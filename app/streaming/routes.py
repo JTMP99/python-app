@@ -7,47 +7,78 @@ import logging
 from app.services.capture_service import CaptureService
 import threading
 
+
+# Use file-based state tracking instead of memory
+def get_capture_path(capture_id):
+    return os.path.join("/app/captures", capture_id)
+
+def get_capture_status(capture_id):
+    """Get status from filesystem instead of memory"""
+    capture_path = get_capture_path(capture_id)
+    metadata_file = os.path.join(capture_path, "metadata.json")
+    if os.path.exists(metadata_file):
+        with open(metadata_file, 'r') as f:
+            return json.load(f)
+    return None
+
 @streaming_bp.route("/start", methods=["POST"])
 def start_capture():
+    """Initialize capture and return immediately"""
     try:
         data = request.get_json()
         stream_url = data.get("stream_url")
         if not stream_url:
             return jsonify({"error": "stream_url required"}), 400
 
-        # Create DB record first
-        db_capture = CaptureService.create_capture(stream_url)
+        # Just create the capture object
+        capture = StreamCapture(stream_url)
         
-        # Start capture process in background
-        def run_capture():
-            try:
-                capture = StreamCapture(stream_url, db_capture.id)
-                capture.initialize()
-            except Exception as e:
-                CaptureService.update_capture_status(
-                    db_capture.id, 
-                    'failed',
-                    error=str(e)
-                )
-
-        thread = threading.Thread(target=run_capture)
+        # Start setup in background thread
+        def setup_capture():
+            capture.initialize()  # New method for staged setup
+            
+        thread = threading.Thread(target=setup_capture)
         thread.daemon = True
         thread.start()
 
-        return jsonify(db_capture.to_dict()), 202
+        # Return immediately with ID
+        return jsonify({
+            "id": capture.id,
+            "status": "initializing",
+            "stream_url": stream_url
+        }), 202
 
     except Exception as e:
+        current_app.logger.exception("Error starting capture")
         return jsonify({"error": str(e)}), 500
 
-@streaming_bp.route("/status/<capture_id>")
+@streaming_bp.route("/status/<capture_id>", methods=["GET"])
 def get_status(capture_id):
-    """Get capture status with metrics"""
+    """Get status from filesystem"""
     try:
-        data = CaptureService.get_capture_with_metrics(capture_id)
-        if not data:
+        status = get_capture_status(capture_id)
+        if not status:
             return jsonify({"error": "Capture not found"}), 404
-        return jsonify(data)
+        return jsonify(status)
     except Exception as e:
+        current_app.logger.exception("Error getting status")
+        return jsonify({"error": str(e)}), 500
+
+@streaming_bp.route("/stop/<capture_id>", methods=["POST"])
+def stop_capture(capture_id):
+    """Stop an active capture"""
+    try:
+        status = get_capture_status(capture_id)
+        if not status:
+            return jsonify({"error": "Capture not found"}), 404
+            
+        # Create new StreamCapture instance from stored metadata
+        capture = StreamCapture.from_metadata(status)
+        capture.stop_capture()
+        
+        return jsonify(get_capture_status(capture_id))
+    except Exception as e:
+        current_app.logger.exception("Error stopping capture")
         return jsonify({"error": str(e)}), 500
 
 
