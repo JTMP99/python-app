@@ -8,17 +8,19 @@ from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.common.by import By  # Import By
+from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import random
 import tempfile
 import shutil
-from app.config import Config  # Import the Config class
+import requests
+from urllib.parse import urlparse
+from app.config import Config
 
-# Ensure /app/captures exists (created in Dockerfile, but good to be sure)
+# Ensure directories exist
 os.makedirs("/app/captures", exist_ok=True)
-
+os.makedirs("/app/logs", exist_ok=True)
 
 class StreamCapture:
     def __init__(self, stream_url: str):
@@ -26,6 +28,10 @@ class StreamCapture:
         self.id = str(uuid.uuid4())
         self.capture_dir = f"/app/captures/{self.id}"
         self.debug_dir = f"{self.capture_dir}/debug"
+        
+        # Create directories
+        os.makedirs(self.capture_dir, exist_ok=True)
+        os.makedirs(self.debug_dir, exist_ok=True)
 
         # Create a unique temporary directory for Chrome user data
         self.user_data_dir = tempfile.mkdtemp()
@@ -33,12 +39,11 @@ class StreamCapture:
         # File paths
         self.video_file = f"{self.capture_dir}/video.mp4"
         self.metadata_file = f"{self.capture_dir}/metadata.json"
-        os.makedirs(self.debug_dir, exist_ok=True)
 
         # Capture state
-        self.process = None  # FFmpeg process
+        self.process = None
         self.capturing = False
-        self.driver = None  # Selenium WebDriver instance
+        self.driver = None
         self.start_time = None
         self.end_time = None
 
@@ -52,10 +57,57 @@ class StreamCapture:
             "status": "initialized",
             "video_path": self.video_file,
             "errors": [],
-            "page_analysis": {},  # Placeholder for page analysis results
+            "page_analysis": {},
             "debug_screenshots": []
         }
         self._save_metadata()
+
+    def validate_connection(self):
+        """Pre-check connection before starting selenium"""
+        try:
+            # Parse domain from URL
+            parsed = urlparse(self.stream_url)
+            domain = parsed.netloc
+            
+            # First try a simple HEAD request to the domain
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            }
+            
+            session = requests.Session()
+            
+            # Try HTTPS first
+            try:
+                probe_url = f"https://{domain}"
+                response = session.head(probe_url, headers=headers, timeout=10, allow_redirects=True)
+                logging.info(f"Probe response: {response.status_code}")
+                
+                if response.status_code == 524:
+                    # If we get a 524, try with a longer timeout
+                    time.sleep(5)  # Wait before retry
+                    response = session.head(probe_url, headers=headers, timeout=30)
+                
+                if response.status_code >= 400:
+                    raise Exception(f"Domain probe failed with status {response.status_code}")
+                    
+            except requests.RequestException as e:
+                logging.warning(f"HTTPS probe failed: {e}")
+                # Try HTTP fallback
+                probe_url = f"http://{domain}"
+                response = session.head(probe_url, headers=headers, timeout=10)
+                
+            return True
+                
+        except Exception as e:
+            logging.error(f"Connection validation failed: {e}")
+            self.metadata["errors"].append(f"Connection validation failed: {str(e)}")
+            return False
 
     def setup_selenium(self):
         try:
@@ -71,13 +123,13 @@ class StreamCapture:
             chrome_options.add_argument('--disable-blink-features=AutomationControlled')
             chrome_options.add_argument('--disable-infobars')
             chrome_options.add_argument('--ignore-certificate-errors')
-            chrome_options.add_argument('--disable-web-security')  # Helps with CORS issues
+            chrome_options.add_argument('--disable-web-security')
             chrome_options.add_argument('--allow-running-insecure-content')
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
             chrome_options.binary_location = Config.GOOGLE_CHROME_BIN
 
-            # Randomize window size slightly
+            # Randomize window size
             width = random.randint(1800, 1920)
             height = random.randint(1000, 1080)
             chrome_options.add_argument(f'--window-size={width},{height}')
@@ -106,7 +158,7 @@ class StreamCapture:
                         '''
                     })
 
-                    # Set extra headers to look more like a real browser
+                    # Set extra headers
                     self.driver.execute_cdp_cmd('Network.setExtraHTTPHeaders', {
                         'headers': {
                             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -136,10 +188,10 @@ class StreamCapture:
                     # Load the page
                     self.driver.get(self.stream_url)
                     
-                    # Take screenshot immediately
+                    # Take screenshot
                     self.take_debug_screenshot("initial_load")
                     
-                    # Check for common blocking patterns
+                    # Check for blocks
                     if self.check_for_blocks():
                         raise Exception("Detected access blocking")
 
@@ -159,7 +211,7 @@ class StreamCapture:
                     else:
                         raise
 
-                return True
+            return True
 
         except Exception as e:
             logging.exception("Selenium setup error")
@@ -192,13 +244,16 @@ class StreamCapture:
                         logging.warning(f"Blocking detected: {category} - {indicator}")
                         return True
 
-            # Check HTTP status code using JavaScript
-            status_code = self.driver.execute_script(
-                "return window.performance.getEntries()[0].responseStatus"
-            )
-            if status_code and status_code >= 400:
-                self.metadata["errors"].append(f"HTTP error: {status_code}")
-                return True
+            # Check HTTP status code
+            try:
+                status_code = self.driver.execute_script(
+                    "return window.performance.getEntries()[0].responseStatus"
+                )
+                if status_code and status_code >= 400:
+                    self.metadata["errors"].append(f"HTTP error: {status_code}")
+                    return True
+            except:
+                pass
 
             return False
 
@@ -207,8 +262,18 @@ class StreamCapture:
             return True
 
     def start_capture(self) -> None:
-        """Start capturing video"""
+        """Start capturing video with pre-validation"""
         try:
+            # First validate basic connectivity
+            if not self.validate_connection():
+                self.metadata["status"] = "failed"
+                self.metadata["errors"].append("Failed initial connection check")
+                self._save_metadata()
+                return
+
+            # Add delay after validation
+            time.sleep(3)
+
             if not self.setup_selenium():
                 self.metadata["status"] = "failed"
                 self._save_metadata()
@@ -222,46 +287,50 @@ class StreamCapture:
 
             logging.info(f"Capture started for {self.stream_url}")
 
+            # Start FFmpeg with reduced initial load
             command = [
                 "ffmpeg",
-                "-f", "x11grab",  # Input format for X11 screen grabbing
-                "-video_size", "1920x1080",  # Capture size (match or exceed window size)
-                "-i", os.getenv("DISPLAY", ":99"),  # Display to capture from (defaults to :99)
-                "-c:v", "libx264",  # Video codec (H.264)
-                "-preset", "ultrafast",  # Encoding preset (balance speed/quality)
-                "-t", "60", # Added timeout
-                "-c:a", "aac",  # Add audio codec
-                "-ac", "2",      # Stereo audio
-                self.video_file  # Output file
+                "-f", "x11grab",
+                "-video_size", "1280x720",  # Start with lower resolution
+                "-framerate", "15",  # Lower framerate to start
+                "-i", os.getenv("DISPLAY", ":99"),
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-tune", "zerolatency",
+                "-t", "60",
+                self.video_file
             ]
 
             logging.debug(f"Running FFmpeg command: {' '.join(command)}")
             self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-            # Monitor the FFmpeg process. Wait for it to finish, or for a timeout
+            # Poll with better error handling
             start_wait = time.time()
-            while time.time() - start_wait < 65:  # Check for up to 65 seconds
-                if self.process.poll() is not None:  # Check if process has terminated
-                    break  # Exit loop if FFmpeg has finished/failed
+            while time.time() - start_wait < 65:
+                if self.process.poll() is not None:
+                    break
+                
+                # Take progress screenshots every 10 seconds
+                if int(time.time() - start_wait) % 10 == 0:
+                    self.take_debug_screenshot(f"progress_{int(time.time() - start_wait)}")
+                
                 time.sleep(1)
                 self._update_metadata(duration=int(time.time() - start_wait))
 
             self.take_debug_screenshot("final_state")
 
-            if self.process.poll() is not None:  # Process terminated
+            if self.process.poll() is not None:
                 stdout, stderr = self.process.communicate()
-                logging.debug(f"FFmpeg stdout: {stdout.decode() if stdout else ''}")
                 if stderr:
                     logging.error(f"FFmpeg stderr: {stderr.decode()}")
                     self.metadata["errors"].append(f"FFmpeg error: {stderr.decode()}")
-
 
         except Exception as e:
             logging.exception("Error during stream capture")
             self.metadata["errors"].append(f"Capture error: {str(e)}")
             self.metadata["status"] = "failed"
             self._save_metadata()
-            self.stop_capture()  # Ensure resources are released
+            self.stop_capture()
 
     def stop_capture(self) -> None:
         """Stop capturing with enhanced termination and cleanup"""
@@ -270,17 +339,16 @@ class StreamCapture:
             if self.process and self.process.poll() is None:
                 self.process.terminate()
                 try:
-                    self.process.wait(timeout=10)  # Wait up to 10 seconds for graceful termination
+                    self.process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    self.process.kill()  # Force kill if timeout occurs
+                    self.process.kill()
                     logging.warning(f"Forced termination of FFmpeg process for capture {self.id}")
                 finally:
                     stdout, stderr = self.process.communicate()
                     if stderr:
                         logging.debug(f"FFmpeg stderr on stop: {stderr.decode()}")
 
-
-            # Quit Selenium driver and take a screenshot before quitting
+            # Quit Selenium driver
             if self.driver:
                 self.take_debug_screenshot("before_quit")
                 try:
@@ -292,10 +360,9 @@ class StreamCapture:
             if self.user_data_dir and os.path.exists(self.user_data_dir):
                 shutil.rmtree(self.user_data_dir, ignore_errors=True)
                 logging.info(f"Deleted temporary user data directory: {self.user_data_dir}")
-                self.user_data_dir = None  # Reset to avoid reuse
+                self.user_data_dir = None
 
-
-            # Update capture state and metadata
+            # Update metadata
             self.capturing = False
             self.end_time = datetime.now()
             duration = (self.end_time - self.start_time).total_seconds() if self.start_time else None
@@ -323,12 +390,11 @@ class StreamCapture:
             if self.user_data_dir and os.path.exists(self.user_data_dir):
                 shutil.rmtree(self.user_data_dir, ignore_errors=True)
 
-
     def _save_metadata(self):
         """Save metadata to file"""
         try:
             with open(self.metadata_file, 'w') as f:
-                json.dump(self.metadata, f, indent=2, default=str)  # Use default=str for serialization
+                json.dump(self.metadata, f, indent=2, default=str)
             logging.debug(f"Metadata saved for {self.id}")
         except Exception as e:
             logging.error(f"Failed to save metadata: {e}")
@@ -351,48 +417,3 @@ class StreamCapture:
             logging.debug(f"Screenshot saved: {screenshot_path}")
         except Exception as e:
             logging.error(f"Failed to take screenshot: {e}")
-
-
-    def check_for_bot_detection(self):
-        """Check for common bot detection mechanisms."""
-        try:
-            # Check for reCAPTCHA
-            if self.driver.find_elements(By.TAG_NAME, 'iframe[src*="recaptcha"]'):
-                self.metadata["errors"].append("reCAPTCHA detected")
-                logging.warning("reCAPTCHA detected")
-                return True  # Or some other signal
-
-            # Check for Cloudflare's "I'm Under Attack Mode" (IUAM)
-            if "I'm Under Attack Mode" in self.driver.title:
-                self.metadata["errors"].append("Cloudflare IUAM detected")
-                logging.warning("Cloudflare IUAM detected")
-                return True
-
-            #Check for a button with id="challenge-running"
-            if self.driver.find_elements(By.ID, 'challenge-running'):
-                self.metadata["errors"].append("Detected element with id='challenge-running'")
-                logging.warning("Detected element with id='challenge-running'")
-                return True
-
-            # Check for a div with id="cf-challenge-running"
-            if self.driver.find_elements(By.ID, "cf-challenge-running"):
-                self.metadata["errors"].append("Cloudflare challenge detected (cf-challenge-running)")
-                logging.warning("Cloudflare challenge detected (cf-challenge-running)")
-                return True
-
-            # Generic check for common bot detection strings
-            for phrase in ["bot detection", "access denied", "are you a human", "please wait"]:
-                if phrase in self.driver.page_source.lower():
-                    self.metadata["errors"].append(f"Bot detection phrase found: {phrase}")
-                    logging.warning(f"Bot detection phrase found: {phrase}")
-                    return True  # Or handle differently
-
-
-            # Add more checks as needed, based on the sites you are targeting
-
-            return False  # No bot detection found (so far)
-
-        except Exception as e:
-            logging.exception("Error during bot detection check")
-            self.metadata["errors"].append(f"Bot detection check error: {str(e)}")
-            return True  # Treat errors as potential bot detection
