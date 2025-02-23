@@ -1,0 +1,2 @@
+# streams.py
+STREAMS = {}

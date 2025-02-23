@@ -1,29 +1,40 @@
 # app/__init__.py
-from flask import Flask
+from flask import Flask, render_template
 from flask_sqlalchemy import SQLAlchemy
-from flask_migrate import Migrate
-from .config import Config
+from flask_migrate import Migrate  # Keep for database migrations
+from .config import Config, DevelopmentConfig, ProductionConfig
+import os
 
 db = SQLAlchemy()
-migrate = Migrate()
+migrate = Migrate()  # Create Migrate instance
 
 def create_app(config_class=Config):
     app = Flask(__name__)
-    app.config.from_object(config_class)
+
+    # Choose configuration based on environment
+    if os.environ.get('FLASK_ENV') == 'production':
+        app.config.from_object(ProductionConfig)
+    else:
+        app.config.from_object(DevelopmentConfig)  # Default to development
 
     # Initialize extensions
     db.init_app(app)
-    migrate.init_app(app, db)
+    migrate.init_app(app, db)  # Initialize Migrate, passing in app and db
 
-    with app.app_context():
-        # Create all tables. In production, use migrations instead
-        db.create_all()
+    # Make STREAMS available on the app object
+    app.STREAMS = {}
 
-    # Import blueprints
+    # Import and register blueprints
     from app.streaming import streaming_bp
-    from app.streaming.analytics import analytics_bp
-    
     app.register_blueprint(streaming_bp, url_prefix='/streams')
-    app.register_blueprint(analytics_bp, url_prefix='/analytics')
+    
+    # --- Other blueprints (commented out for now) ---
+    # from app.scraping import scraping_bp
+    # app.register_blueprint(scraping_bp, url_prefix='/scraping')
 
+    # --- Dashboard route (at the root URL) ---
+    @app.route("/")
+    def dashboard():
+        return render_template("dashboard.html")
+    
     return app
