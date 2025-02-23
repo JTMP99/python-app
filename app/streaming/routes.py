@@ -9,14 +9,13 @@ STREAMS = {}
 
 @streaming_bp.route("/start", methods=["POST"])
 def start_capture():
+    """Start a new stream capture. Expects JSON with 'stream_url'."""
     try:
-        # Log everything about the request
         current_app.logger.debug(f"Headers: {dict(request.headers)}")
         current_app.logger.debug(f"Raw data: {request.get_data()}")
         current_app.logger.debug(f"Form data: {request.form}")
         current_app.logger.debug(f"Files: {request.files}")
         
-        # Try to get JSON data and log if it fails
         try:
             data = request.get_json()
             current_app.logger.debug(f"Parsed JSON data: {data}")
@@ -46,6 +45,7 @@ def start_capture():
 
 @streaming_bp.route("/stop", methods=["POST"])
 def stop_capture():
+    """Stop an existing stream capture. Expects JSON with 'stream_id'."""
     try:
         data = request.get_json()
         current_app.logger.info(f"Received stop request with data: {data}")
@@ -69,6 +69,7 @@ def stop_capture():
 
 @streaming_bp.route("/status/<stream_id>", methods=["GET"])
 def get_status(stream_id):
+    """Get the status of a specific stream capture."""
     try:
         current_app.logger.info(f"Status request for stream_id: {stream_id}")
         
@@ -87,7 +88,7 @@ def get_status(stream_id):
 
 @streaming_bp.route("/debug/<stream_id>")
 def get_debug_info(stream_id):
-    """Get comprehensive debug information for a capture"""
+    """Get comprehensive debug information for a capture."""
     try:
         if stream_id not in STREAMS:
             return jsonify({"error": "Stream not found"}), 404
@@ -95,7 +96,6 @@ def get_debug_info(stream_id):
         stream_capture = STREAMS[stream_id]
         metadata = stream_capture.get_status()
         
-        # Extract just the debug-relevant information
         debug_info = {
             "id": stream_id,
             "stream_url": metadata["stream_url"],
@@ -116,7 +116,7 @@ def get_debug_info(stream_id):
 
 @streaming_bp.route("/debug/<stream_id>/screenshots/<timestamp>")
 def get_screenshot(stream_id, timestamp):
-    """Retrieve a specific debug screenshot"""
+    """Retrieve a specific debug screenshot."""
     try:
         if stream_id not in STREAMS:
             return jsonify({"error": "Stream not found"}), 404
@@ -124,7 +124,6 @@ def get_screenshot(stream_id, timestamp):
         stream_capture = STREAMS[stream_id]
         debug_dir = f"/app/captures/{stream_id}/debug"
         
-        # Find the matching screenshot
         for filename in os.listdir(debug_dir):
             if timestamp in filename and filename.endswith('.png'):
                 return send_file(
@@ -140,6 +139,7 @@ def get_screenshot(stream_id, timestamp):
 
 @streaming_bp.route("/download/<stream_id>")
 def download(stream_id):
+    """Download the captured video for a completed capture."""
     try:
         current_app.logger.info(f"Download request for stream_id: {stream_id}")
         
