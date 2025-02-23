@@ -26,84 +26,41 @@ class StreamCapture:
     def __init__(self, stream_url: str):
         self.stream_url = stream_url
         self.id = str(uuid.uuid4())
-        self.capture_dir = f"/app/captures/{self.id}"
-        self.debug_dir = f"{self.capture_dir}/debug"
+        self.base_dir = f"/app/captures/{self.id}"
+        self.setup_directories()
         
-        # Create directories
-        os.makedirs(self.capture_dir, exist_ok=True)
-        os.makedirs(self.debug_dir, exist_ok=True)
-
-        # Create a unique temporary directory for Chrome user data
+        # User data directory for Chrome
         self.user_data_dir = tempfile.mkdtemp()
-
-        # File paths
-        self.video_file = f"{self.capture_dir}/video.mp4"
-        self.metadata_file = f"{self.capture_dir}/metadata.json"
-
-        # Capture state
-        self.process = None
-        self.capturing = False
-        self.driver = None
-        self.start_time = None
-        self.end_time = None
-
+        
         # Initialize metadata
         self.metadata = {
             "id": self.id,
             "stream_url": stream_url,
-            "start_time": None,
-            "end_time": None,
-            "duration": None,
-            "status": "initialized",
-            "video_path": self.video_file,
+            "status": "created",
+            "stage": "init",
             "errors": [],
-            "page_analysis": {},
-            "debug_screenshots": []
+            "stages_completed": [],
+            "start_time": None,
+            "end_time": None
         }
         self._save_metadata()
+        
+        # Initialize Selenium driver
+        self.driver = None
 
     def validate_connection(self):
         """Pre-check connection before starting selenium"""
         try:
-            # Parse domain from URL
             parsed = urlparse(self.stream_url)
             domain = parsed.netloc
             
-            # First try a simple HEAD request to the domain
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
-            }
+            response = requests.head(
+                f"https://{domain}",
+                headers={'User-Agent': 'Mozilla/5.0'},
+                timeout=10
+            )
+            return response.status_code < 400
             
-            session = requests.Session()
-            
-            # Try HTTPS first
-            try:
-                probe_url = f"https://{domain}"
-                response = session.head(probe_url, headers=headers, timeout=10, allow_redirects=True)
-                logging.info(f"Probe response: {response.status_code}")
-                
-                if response.status_code == 524:
-                    # If we get a 524, try with a longer timeout
-                    time.sleep(5)  # Wait before retry
-                    response = session.head(probe_url, headers=headers, timeout=30)
-                
-                if response.status_code >= 400:
-                    raise Exception(f"Domain probe failed with status {response.status_code}")
-                    
-            except requests.RequestException as e:
-                logging.warning(f"HTTPS probe failed: {e}")
-                # Try HTTP fallback
-                probe_url = f"http://{domain}"
-                response = session.head(probe_url, headers=headers, timeout=10)
-                
-            return True
-                
         except Exception as e:
             logging.error(f"Connection validation failed: {e}")
             self.metadata["errors"].append(f"Connection validation failed: {str(e)}")
@@ -270,24 +227,6 @@ class StreamCapture:
         instance.metadata = metadata
         return instance
 
-    def __init__(self, stream_url):
-        self.stream_url = stream_url
-        self.id = str(uuid.uuid4())
-        self.base_dir = f"/app/captures/{self.id}"
-        self.setup_directories()
-        
-        self.metadata = {
-            "id": self.id,
-            "stream_url": stream_url,
-            "status": "created",
-            "stage": "init",
-            "errors": [],
-            "stages_completed": [],
-            "start_time": None,
-            "end_time": None
-        }
-        self._save_metadata()
-
     def setup_directories(self):
         """Set up directory structure"""
         os.makedirs(self.base_dir, exist_ok=True)
@@ -297,48 +236,35 @@ class StreamCapture:
     def initialize(self):
         """Staged initialization process"""
         try:
-            # Stage 1: Connection validation
             self._update_status("validating_connection")
             if not self.validate_connection():
-                self._update_status("failed", error="Connection validation failed")
-                return
-
-            # Stage 2: Browser setup
-            self._update_status("setting_up_browser")
+                self._update_status("failed", "Connection validation failed")
+                return False
+                
+            self._update_status("setting_up_selenium")
             if not self.setup_selenium():
-                self._update_status("failed", error="Browser setup failed")
-                return
-
-            # Stage 3: Start capture
-            self._update_status("starting_capture")
-            if not self.start_capture():
-                self._update_status("failed", error="Capture start failed")
-                return
-
-            self._update_status("running")
-
+                self._update_status("failed", "Selenium setup failed")
+                return False
+                
+            self._update_status("ready")
+            return True
+            
         except Exception as e:
-            self._update_status("failed", error=str(e))
-            self.cleanup()
+            self._update_status("failed", str(e))
+            return False
 
-    def _update_status(self, status, error=None):
-        """Update status and save metadata"""
+    def _update_status(self, status: str, error: str = None) -> None:
+        """Update capture status and optionally add error"""
         self.metadata["status"] = status
-        self.metadata["last_updated"] = datetime.now().isoformat()
-        
         if error:
-            self.metadata["errors"].append({
-                "time": datetime.now().isoformat(),
-                "error": error
-            })
-        
+            self.metadata["errors"].append(error)
         self._save_metadata()
 
-    def _save_metadata(self):
-        """Save metadata to filesystem"""
-        metadata_file = os.path.join(self.base_dir, "metadata.json")
-        with open(metadata_file, 'w') as f:
-            json.dump(self.metadata, f, indent=2, default=str)
+    def _save_metadata(self) -> None:
+        """Save metadata to JSON file"""
+        metadata_path = os.path.join(self.base_dir, "metadata.json")
+        with open(metadata_path, 'w') as f:
+            json.dump(self.metadata, f, indent=2)
 
     def cleanup(self):
         """Clean up resources"""
@@ -486,15 +412,6 @@ class StreamCapture:
                     pass
             if self.user_data_dir and os.path.exists(self.user_data_dir):
                 shutil.rmtree(self.user_data_dir, ignore_errors=True)
-
-    def _save_metadata(self):
-        """Save metadata to file"""
-        try:
-            with open(self.metadata_file, 'w') as f:
-                json.dump(self.metadata, f, indent=2, default=str)
-            logging.debug(f"Metadata saved for {self.id}")
-        except Exception as e:
-            logging.error(f"Failed to save metadata: {e}")
 
     def _update_metadata(self, **kwargs):
         """Update metadata fields and save"""
