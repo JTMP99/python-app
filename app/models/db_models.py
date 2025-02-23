@@ -1,6 +1,6 @@
 # app/models.py
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, JSON, Integer
+from sqlalchemy import Column, String, DateTime, JSON, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from app import db
 import uuid
