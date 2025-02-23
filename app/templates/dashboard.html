@@ -233,6 +233,25 @@
             errorsPre.textContent = data.errors && data.errors.length > 0 ?
                 JSON.stringify(data.errors, null, 2) :
                 'No errors reported';
+
+            // Add download link if capture is completed
+            const actionContainer = captureDiv.querySelector('.capture-item > div');
+            if (data.status === 'completed' && data.video_path) {
+                if (!actionContainer.querySelector('.download-link')) {
+                    const link = document.createElement('a');
+                    link.href = `/streams/download/${data.id}`;
+                    link.className = 'download-link bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600 ml-2';
+                    link.textContent = 'Download Video';
+                    actionContainer.appendChild(link);
+                }
+            }
+
+            // Show errors in the main error div for better visibility
+            if (data.errors && data.errors.length > 0) {
+                const errorDiv = document.getElementById('errorMessage');
+                errorDiv.textContent = `Capture errors: ${data.errors.join(', ')}`;
+                errorDiv.classList.remove('hidden');
+            }
         }
 
 
