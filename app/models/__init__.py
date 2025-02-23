@@ -1,8 +1,4 @@
-from flask import Blueprint
+# app/models/__init__.py
+from .db_models import db, StreamCapture, CaptureMetrics  # Import db here
 
-db_models_bp = Blueprint('db_models', __name__)
-
-from . import db_models
-from .db_models import StreamCapture, CaptureMetrics
-
-__all__ = ['StreamCapture', 'CaptureMetrics']
+__all__ = ['StreamCapture', 'CaptureMetrics', 'db'] # for from x import * use
