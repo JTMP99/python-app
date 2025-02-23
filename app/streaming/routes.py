@@ -1,96 +1,79 @@
 # app/streaming/routes.py
 from flask import request, jsonify, send_from_directory, current_app, send_file
 from app.streaming import streaming_bp  # Import the blueprint
-from app.streaming.capture import start_capture_task  # Import Celery *task*
-from app import STREAMS, celery  # Import STREAMS and celery
+from app.streaming.capture import StreamCapture  # Import StreamCapture class
 import os
 import logging
 
 
 @streaming_bp.route("/start", methods=["POST"])
 def start_capture():
-    """Start a new stream capture (asynchronously via Celery)."""
+    """Start a new stream capture (now synchronous)."""
     data = request.get_json()
     stream_url = data.get("stream_url")
 
     if not stream_url:
         return jsonify({"error": "stream_url parameter is required"}), 400
 
-    # Start the Celery task *asynchronously*
-    task = start_capture_task.delay(stream_url)
-    current_app.logger.info(f"Started Celery task with ID: {task.id}")  # Log task ID
+    # Create and start the StreamCapture directly
+    stream_capture = StreamCapture(stream_url)
+    current_app.STREAMS[stream_capture.id] = stream_capture  # Add to STREAMS
+    try:
+        stream_capture.start_capture()
+    except Exception as e:
+        #Make sure to catch and return errors.
+        logging.exception(f"Error starting stream capture: {e}")
+        return jsonify({"error": str(e)}), 500
 
-    # Immediately return the task ID to the client
-    return jsonify({"task_id": task.id, "status": "pending"})
+    # Return stream data
+    return jsonify(stream_capture.get_status())
+
 
 
 @streaming_bp.route("/stop", methods=["POST"])
 def stop_capture():
     """Stop an existing stream capture."""
     data = request.get_json()
-    stream_id = data.get("stream_id")  # This is the *capture* ID
+    stream_id = data.get("stream_id")
 
     if not stream_id:
         return jsonify({"error": "stream_id parameter is required"}), 400
 
-    # Check if the stream_id exists and try to revoke the task
-    if stream_id in STREAMS:
-        stream_capture = STREAMS[stream_id]
-        current_app.logger.info(f"Stopping capture for stream ID: {stream_id}") #log
-        # Attempt to stop the running capture process.
+    if stream_id in current_app.STREAMS:
+        stream_capture = current_app.STREAMS[stream_id]
+        current_app.logger.info(f"Stopping capture for stream ID: {stream_id}")
         stream_capture.stop_capture()
         # Remove from active streams
-        del STREAMS[stream_id]  # Remove from the dictionary
+        del current_app.STREAMS[stream_id]
         return jsonify({"status": "stopped"})
     else:
-        current_app.logger.error(f"Invalid stream_id: {stream_id}") #log
-        return jsonify({"error": "Stream not found or already stopped"}), 404 #Correct status code.
+        current_app.logger.error(f"Invalid stream_id: {stream_id}")
+        return jsonify({"error": "Stream not found or already stopped"}), 404
 
-@streaming_bp.route("/status/<task_id>", methods=["GET"])
-def get_status(task_id):
-    """Get the status of a Celery task (and the capture, if finished)."""
-    current_app.logger.debug(f"Checking status for task ID: {task_id}") # Log the task ID being checked
-    task = celery.AsyncResult(task_id)
-    current_app.logger.debug(f"Task state: {task.state}") # Log the raw task state
 
-    if task.state == 'PENDING':
-        response = {
-            'state': task.state,
-            'status': 'Pending...'  # Initial status
-        }
-    elif task.state != 'FAILURE':
-        response = {
-            'state': task.state,
-            'status': task.info.get('status', '') if isinstance(task.info, dict) else str(task.info),  # Get status, handle non-dict
-        }
-        if task.state == 'SUCCESS':
-            stream_id = task.result # This now holds the *stream ID*.
-            current_app.logger.debug(f"Task succeeded. Stream ID: {stream_id}") # Log stream ID
-            if stream_id in STREAMS:
-              stream_capture = STREAMS[stream_id]
-              # Update response with status
-              response.update(stream_capture.get_status()) # Use get_status for the rest.
-            else:
-              response['status'] = "Capture data not found" # Error
 
-    else:
-        # Something went wrong in the task.
-        response = {
-            'state': task.state,
-            'status': str(task.info),  # this is the exception raised
-        }
-    current_app.logger.debug(f"Returning status: {response}")  # Log the *entire* response
-    return jsonify(response)
+@streaming_bp.route("/status/<stream_id>", methods=["GET"])
+def get_status(stream_id):
+    """Get the status of a specific stream capture."""
+    current_app.logger.info(f"Status request for stream_id: {stream_id}")
 
+    if stream_id not in current_app.STREAMS:
+        current_app.logger.error(f"Stream not found: {stream_id}")
+        return jsonify({"error": "Stream not found"}), 404
+
+    stream_capture = current_app.STREAMS[stream_id]
+    status = stream_capture.get_status()
+    current_app.logger.info(f"Returning status: {status}")
+    return jsonify(status)
 
 
 @streaming_bp.route("/debug/<stream_id>")
 def get_debug_info(stream_id):
     """Get comprehensive debug information for a capture."""
-    if stream_id not in STREAMS:
+    if stream_id not in current_app.STREAMS:
         return jsonify({"error": "Stream not found"}), 404
 
-    stream_capture = STREAMS[stream_id]
+    stream_capture = current_app.STREAMS[stream_id]
     metadata = stream_capture.get_status()
 
     debug_info = {
@@ -112,10 +95,10 @@ def get_debug_info(stream_id):
 def get_screenshot(stream_id, timestamp):
     """Retrieve a specific debug screenshot."""
 
-    if stream_id not in STREAMS:
+    if stream_id not in current_app.STREAMS:
         return jsonify({"error": "Stream not found"}), 404
 
-    stream_capture = STREAMS[stream_id]
+    stream_capture = current_app.STREAMS[stream_id]
     debug_dir = f"/app/captures/{stream_id}/debug"
 
     for filename in os.listdir(debug_dir):
@@ -131,10 +114,10 @@ def get_screenshot(stream_id, timestamp):
 @streaming_bp.route("/download/<stream_id>")
 def download(stream_id):
     """Download the captured video for a completed capture."""
-    if stream_id not in STREAMS:
+    if stream_id not in current_app.STREAMS:
         return jsonify({"error": "Stream not found"}), 404
 
-    stream_capture = STREAMS[stream_id]
+    stream_capture = current_app.STREAMS[stream_id]
     metadata = stream_capture.get_status()
     if metadata["status"] != "completed":
         return jsonify({"error": "Capture not completed"}), 400

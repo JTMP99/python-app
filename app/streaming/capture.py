@@ -1,5 +1,4 @@
 import subprocess
-import threading
 import time
 import uuid
 import json
@@ -16,7 +15,6 @@ import random
 import tempfile
 import shutil
 from app.config import Config  # Import the Config class
-from app import celery, STREAMS  # Import Celery and STREAMS
 
 # Ensure /app/captures exists (created in Dockerfile, but good to be sure)
 os.makedirs("/app/captures", exist_ok=True)
@@ -323,18 +321,3 @@ class StreamCapture:
             logging.exception("Error during bot detection check")
             self.metadata["errors"].append(f"Bot detection check error: {str(e)}")
             return True  # Treat errors as potential bot detection
-
-# --- Celery Task ---
-@celery.task(bind=True)  # Use bind=True to access task instance (self)
-def start_capture_task(self, stream_url):
-    stream_capture = StreamCapture(stream_url)
-    # Store stream_capture in STREAMS *before* starting capture. VERY IMPORTANT
-    STREAMS[stream_capture.id] = stream_capture
-    try:
-        stream_capture.start_capture()
-    except Exception as exc:
-        # You can retry the task here if you want.
-        # raise self.retry(exc=exc, countdown=5)  # Retry in 5 seconds (example)
-        return  # Or just return without retrying
-
-    return stream_capture.id  # Return the stream ID
