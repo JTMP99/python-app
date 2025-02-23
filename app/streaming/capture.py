@@ -63,24 +63,30 @@ class StreamCapture:
 
             chrome_options = Options()
             chrome_options.add_argument(f'--user-data-dir={self.user_data_dir}')
-            chrome_options.add_argument('--headless')  # Run Chrome in headless mode
-            chrome_options.add_argument('--no-sandbox')  # Necessary for Docker
-            chrome_options.add_argument('--disable-dev-shm-usage') # Overcome limited resource problems
+            chrome_options.add_argument('--headless')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            
+            # Enhanced anti-detection options
             chrome_options.add_argument('--disable-blink-features=AutomationControlled')
             chrome_options.add_argument('--disable-infobars')
+            chrome_options.add_argument('--ignore-certificate-errors')
+            chrome_options.add_argument('--disable-web-security')  # Helps with CORS issues
+            chrome_options.add_argument('--allow-running-insecure-content')
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
-            chrome_options.binary_location = Config.GOOGLE_CHROME_BIN  # Get Chrome path from config
+            chrome_options.binary_location = Config.GOOGLE_CHROME_BIN
 
-            # Randomize window size
+            # Randomize window size slightly
             width = random.randint(1800, 1920)
             height = random.randint(1000, 1080)
             chrome_options.add_argument(f'--window-size={width},{height}')
 
-            # Add realistic user agent
+            # Rotate user agents
             user_agents = [
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             ]
             chrome_options.add_argument(f'--user-agent={random.choice(user_agents)}')
 
@@ -90,38 +96,74 @@ class StreamCapture:
             for attempt in range(max_retries):
                 try:
                     self.driver = webdriver.Chrome(options=chrome_options)
+                    
+                    # Add CDP commands for better stealth
                     self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
                         'source': '''
-                            Object.defineProperty(navigator, 'webdriver', {
-                                get: () => undefined
-                            });
+                            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                            window.chrome = { runtime: {} };
                         '''
                     })
-                    # Introduce small, random mouse movements.
+
+                    # Set extra headers to look more like a real browser
+                    self.driver.execute_cdp_cmd('Network.setExtraHTTPHeaders', {
+                        'headers': {
+                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                            'Accept-Language': 'en-US,en;q=0.5',
+                            'Accept-Encoding': 'gzip, deflate, br',
+                            'Connection': 'keep-alive',
+                            'Upgrade-Insecure-Requests': '1',
+                            'Sec-Fetch-Dest': 'document',
+                            'Sec-Fetch-Mode': 'navigate',
+                            'Sec-Fetch-Site': 'none',
+                            'Sec-Fetch-User': '?1',
+                            'DNT': '1'
+                        }
+                    })
+
+                    # Enable request/response monitoring
+                    self.driver.execute_cdp_cmd('Network.enable', {})
+                    
+                    # Increased page load timeout
+                    self.driver.set_page_load_timeout(30)
+                    
+                    # Random mouse movements before loading page
                     actions = ActionChains(self.driver)
                     actions.move_by_offset(random.randint(10, 50), random.randint(10, 50))
                     actions.perform()
 
+                    # Load the page
                     self.driver.get(self.stream_url)
-                    self.check_for_bot_detection()  # Call bot detection check
-                    time.sleep(random.uniform(3, 5))  # Wait a random time
+                    
+                    # Take screenshot immediately
+                    self.take_debug_screenshot("initial_load")
+                    
+                    # Check for common blocking patterns
+                    if self.check_for_blocks():
+                        raise Exception("Detected access blocking")
+
+                    time.sleep(random.uniform(3, 5))
 
                     if attempt > 0:
                         logging.info(f"Successfully connected on attempt {attempt + 1}")
-                    break  # Exit loop if successful
+                    break
+
                 except Exception as e:
                     logging.error(f"Attempt {attempt + 1} failed: {e}")
+                    self.take_debug_screenshot(f"error_attempt_{attempt}")
+                    
                     if attempt < max_retries - 1:
-                        wait_time = retry_delay * (2 ** attempt) # Exponential backoff
+                        wait_time = retry_delay * (2 ** attempt)
                         time.sleep(wait_time)
                     else:
-                        raise  # Re-raise the exception after all retries
+                        raise
 
-            return True # Indicate successful setup
+                return True
+
         except Exception as e:
             logging.exception("Selenium setup error")
             self.metadata["errors"].append(f"Selenium setup error: {str(e)}")
-            # Clean up if setup fails
             if self.driver:
                 try:
                     self.driver.quit()
@@ -130,6 +172,39 @@ class StreamCapture:
             if self.user_data_dir and os.path.exists(self.user_data_dir):
                 shutil.rmtree(self.user_data_dir, ignore_errors=True)
             return False
+
+    def check_for_blocks(self):
+        """Comprehensive check for various blocking mechanisms"""
+        try:
+            # Check page source for error indicators
+            page_source = self.driver.page_source.lower()
+            error_indicators = {
+                'cloudflare': ['cloudflare', 'checking your browser', 'challenge-running', 'cf-', 'ray id:', 'timeout occurred'],
+                'bot_detection': ['bot detected', 'automated browser', 'recaptcha', 'captcha', 'are you human'],
+                'timeout': ['timeout', 'timed out', 'no response', 'failed to respond'],
+                'access_denied': ['access denied', 'forbidden', '403', 'blocked', 'unauthorized']
+            }
+
+            for category, indicators in error_indicators.items():
+                for indicator in indicators:
+                    if indicator in page_source:
+                        self.metadata["errors"].append(f"{category}: {indicator} detected")
+                        logging.warning(f"Blocking detected: {category} - {indicator}")
+                        return True
+
+            # Check HTTP status code using JavaScript
+            status_code = self.driver.execute_script(
+                "return window.performance.getEntries()[0].responseStatus"
+            )
+            if status_code and status_code >= 400:
+                self.metadata["errors"].append(f"HTTP error: {status_code}")
+                return True
+
+            return False
+
+        except Exception as e:
+            logging.error(f"Error during block check: {e}")
+            return True
 
     def start_capture(self) -> None:
         """Start capturing video"""
