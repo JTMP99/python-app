@@ -18,6 +18,7 @@ def start_capture():
 
     # Start the Celery task *asynchronously*
     task = start_capture_task.delay(stream_url)
+    current_app.logger.info(f"Started Celery task with ID: {task.id}")  # Log task ID
 
     # Immediately return the task ID to the client
     return jsonify({"task_id": task.id, "status": "pending"})
@@ -35,18 +36,22 @@ def stop_capture():
     # Check if the stream_id exists and try to revoke the task
     if stream_id in STREAMS:
         stream_capture = STREAMS[stream_id]
+        current_app.logger.info(f"Stopping capture for stream ID: {stream_id}") #log
         # Attempt to stop the running capture process.
         stream_capture.stop_capture()
         # Remove from active streams
         del STREAMS[stream_id]  # Remove from the dictionary
         return jsonify({"status": "stopped"})
     else:
+        current_app.logger.error(f"Invalid stream_id: {stream_id}") #log
         return jsonify({"error": "Stream not found or already stopped"}), 404 #Correct status code.
 
 @streaming_bp.route("/status/<task_id>", methods=["GET"])
 def get_status(task_id):
     """Get the status of a Celery task (and the capture, if finished)."""
+    current_app.logger.debug(f"Checking status for task ID: {task_id}") # Log the task ID being checked
     task = celery.AsyncResult(task_id)
+    current_app.logger.debug(f"Task state: {task.state}") # Log the raw task state
 
     if task.state == 'PENDING':
         response = {
@@ -60,11 +65,13 @@ def get_status(task_id):
         }
         if task.state == 'SUCCESS':
             stream_id = task.result # This now holds the *stream ID*.
+            current_app.logger.debug(f"Task succeeded. Stream ID: {stream_id}") # Log stream ID
             if stream_id in STREAMS:
               stream_capture = STREAMS[stream_id]
+              # Update response with status
               response.update(stream_capture.get_status()) # Use get_status for the rest.
             else:
-                response['status'] = "Capture data not found" # Error
+              response['status'] = "Capture data not found" # Error
 
     else:
         # Something went wrong in the task.
@@ -72,6 +79,7 @@ def get_status(task_id):
             'state': task.state,
             'status': str(task.info),  # this is the exception raised
         }
+    current_app.logger.debug(f"Returning status: {response}")  # Log the *entire* response
     return jsonify(response)
 
 

@@ -15,7 +15,7 @@ from selenium.webdriver.support import expected_conditions as EC
 import random
 import tempfile
 import shutil
-from app.config import Config
+from app.config import Config  # Import the Config class
 from app import celery, STREAMS  # Import Celery and STREAMS
 
 # Ensure /app/captures exists (created in Dockerfile, but good to be sure)
