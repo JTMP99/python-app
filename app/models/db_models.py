@@ -7,6 +7,8 @@ from app import db
 import uuid
 import logging
 
+logger = logging.getLogger(__name__)
+
 class StreamCapture(db.Model):
     """Model representing a stream capture session."""
     __tablename__ = 'stream_captures'
@@ -44,6 +46,12 @@ class StreamCapture(db.Model):
             raise ValueError("stream_url cannot be empty")
         if self.status not in self.VALID_STATUSES:
             raise ValueError(f"Invalid status: {self.status}")
+        
+        # Initialize JSON fields with defaults if not provided
+        self.capture_metadata = kwargs.get('capture_metadata', {})
+        self.errors = kwargs.get('errors', [])
+        self.screenshot_paths = kwargs.get('screenshot_paths', [])
+        self.debug_info = kwargs.get('debug_info', {})
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert the model instance to a dictionary."""
@@ -63,6 +71,46 @@ class StreamCapture(db.Model):
             'screenshot_paths': self.screenshot_paths or [],
             'debug_info': self.debug_info or {}
         }
+
+    def update_status(self, status: str, error: Optional[str] = None) -> None:
+        """Update status and optionally add error."""
+        try:
+            if status not in self.VALID_STATUSES:
+                raise ValueError(f"Invalid status: {status}")
+                
+            self.status = status
+            self.updated_at = datetime.utcnow()
+            
+            if error:
+                if not self.errors:
+                    self.errors = []
+                error_entry = {
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'error': str(error),
+                    'previous_status': self.status
+                }
+                self.errors.append(error_entry)
+                logger.error(f"Capture {self.id} error: {error}")
+
+            db.session.commit()
+        except Exception as e:
+            logger.error(f"Error updating status: {e}")
+            db.session.rollback()
+            raise
+
+    def update_metadata(self, metadata_updates: Dict[str, Any]) -> None:
+        """Update capture metadata."""
+        try:
+            if not self.capture_metadata:
+                self.capture_metadata = {}
+                
+            self.capture_metadata.update(metadata_updates)
+            self.updated_at = datetime.utcnow()
+            db.session.commit()
+        except Exception as e:
+            logger.error(f"Error updating metadata: {e}")
+            db.session.rollback()
+            raise
 
     @property
     def duration(self) -> Optional[int]:
@@ -87,6 +135,7 @@ class CaptureMetrics(db.Model):
         """Initialize a new CaptureMetrics instance with validation."""
         super().__init__(**kwargs)
         self.validate()
+        self.capture_metadata = kwargs.get('capture_metadata', {})
 
     def validate(self) -> None:
         """Validate metric values."""
