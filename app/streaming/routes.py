@@ -7,9 +7,30 @@ from app.models.db_models import CaptureMetrics
 import os
 import logging
 import threading
+import psutil
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+def cleanup_chrome_processes():
+    """Cleanup any stray chrome processes"""
+    try:
+        keywords = ['chrome', 'chromedriver', 'crashpad']
+        for proc in psutil.process_iter(['pid', 'name', 'status']):
+            if any(k in str(proc.info['name']).lower() for k in keywords):
+                try:
+                    logger.info(f"Killing process: {proc.info}")
+                    proc.kill()  # Using kill() instead of terminate()
+                    proc.wait(timeout=1)
+                except (psutil.NoSuchProcess, psutil.TimeoutExpired) as e:
+                    logger.warning(f"Error killing process {proc.info['pid']}: {e}")
+                    # Force kill if terminate failed
+                    try:
+                        os.kill(proc.info['pid'], 9)
+                    except Exception as e:
+                        logger.error(f"Force kill failed for {proc.info['pid']}: {e}")
+    except Exception as e:
+        logger.warning(f"Error in cleanup_chrome_processes: {e}")
 
 @streaming_bp.route("/start", methods=["POST"])
 def start_capture():
@@ -23,6 +44,9 @@ def start_capture():
         if not stream_url:
             return jsonify({"error": "stream_url required"}), 400
 
+        # Cleanup any stray processes
+        cleanup_chrome_processes()
+
         # Create capture object
         capture = StreamCapture(stream_url)
         logger.info(f"Created capture {capture.id} for {stream_url}")
@@ -34,15 +58,18 @@ def start_capture():
             except Exception as e:
                 logger.exception(f"Error in capture thread: {e}")
                 CaptureService.update_capture_status(
-                    capture.id, 
+                    capture.id,
                     "failed",
                     error=str(e)
                 )
+            finally:
+                cleanup_chrome_processes()
             
         thread = threading.Thread(target=capture_thread)
         thread.daemon = True
         thread.start()
 
+        # Return immediately with ID
         return jsonify({
             "id": str(capture.id),
             "status": "initialized",
@@ -52,24 +79,33 @@ def start_capture():
 
     except Exception as e:
         logger.exception("Error starting capture")
+        cleanup_chrome_processes()
         return jsonify({"error": str(e)}), 500
 
 @streaming_bp.route("/status/<capture_id>", methods=["GET"])
 def get_status_endpoint(capture_id):
     """Get capture status from database"""
     try:
+        logger.info(f"Status request for capture {capture_id}")
         capture = CaptureService.get_capture_with_metrics(capture_id)
         if not capture:
             return jsonify({"error": "Capture not found"}), 404
 
-        # Get the model instance to calculate duration
+        # Get complete status
         capture_model = CaptureService.get_capture(capture_id)
         capture_dict = capture.copy()
         
-        # Add calculated duration to response
         if capture_model:
-            capture_dict['duration'] = capture_model.duration
-            capture_dict['current_time'] = datetime.utcnow().isoformat()
+            capture_dict.update({
+                'duration': capture_model.duration,
+                'current_time': datetime.utcnow().isoformat(),
+                'process_info': {
+                    'chrome_running': bool([p for p in psutil.process_iter(['name']) 
+                                         if 'chrome' in str(p.info['name']).lower()]),
+                    'ffmpeg_running': bool([p for p in psutil.process_iter(['name']) 
+                                         if 'ffmpeg' in str(p.info['name'])])
+                }
+            })
             
         return jsonify(capture_dict)
     except Exception as e:
@@ -79,38 +115,60 @@ def get_status_endpoint(capture_id):
 @streaming_bp.route("/stop/<capture_id>", methods=["POST"])
 def stop_capture(capture_id):
     """Stop an active capture"""
+    logger.info(f"Stop request received for capture {capture_id}")
+    
     try:
+        # Get capture with detailed logging
+        logger.info("Fetching capture from database")
         capture_model = CaptureService.get_capture(capture_id)
         if not capture_model:
+            logger.error(f"Capture {capture_id} not found")
             return jsonify({"error": "Capture not found"}), 404
             
+        logger.info(f"Found capture. Current status: {capture_model.status}")
+        
         # Validate current status
         if capture_model.status in ['completed', 'failed']:
+            logger.warning(f"Cannot stop capture in {capture_model.status} state")
             return jsonify({
-                "error": f"Cannot stop capture in {capture_model.status} state"
+                "error": f"Cannot stop capture in {capture_model.status} state",
+                "status": capture_model.status
             }), 400
+
+        # Clean up any existing Chrome processes
+        cleanup_chrome_processes()
             
-        # Create new StreamCapture instance from existing data
-        capture = StreamCapture(
+        # Create new StreamCapture instance with logging
+        logger.info("Creating StreamCapture instance")
+        stream_capture = StreamCapture(
             stream_url=capture_model.stream_url,
             capture_id=capture_id
         )
         
-        # Update status to stopping
+        # Update status before stopping
         CaptureService.update_capture_status(capture_id, "stopping")
         
-        # Stop the capture
-        success = capture.stop_capture()
+        # Stop with logging
+        logger.info("Calling stop_capture()")
+        success = stream_capture.stop_capture()
+        logger.info(f"Stop result: {success}")
+        
         if not success:
             return jsonify({"error": "Failed to stop capture"}), 500
         
-        # Get final status
+        # Cleanup processes again
+        cleanup_chrome_processes()
+        
+        # Get final status with metrics
         final_status = CaptureService.get_capture_with_metrics(capture_id)
+        if not final_status:
+            return jsonify({"error": "Failed to get final status"}), 500
+            
         return jsonify(final_status)
-    except CaptureNotFoundError:
-        return jsonify({"error": "Capture not found"}), 404
+        
     except Exception as e:
         logger.exception(f"Error stopping capture {capture_id}")
+        cleanup_chrome_processes()
         return jsonify({"error": str(e)}), 500
 
 @streaming_bp.route("/debug/<capture_id>")
@@ -133,7 +191,13 @@ def get_debug_info(capture_id):
             "end_time": capture_model.end_time.isoformat() if capture_model.end_time else None,
             "video_path": capture_model.video_path,
             "video_size": capture_model.video_size,
-            "current_time": datetime.utcnow().isoformat()
+            "current_time": datetime.utcnow().isoformat(),
+            "process_info": {
+                "chrome_processes": [p.info['name'] for p in psutil.process_iter(['name']) 
+                                  if 'chrome' in str(p.info['name']).lower()],
+                "ffmpeg_processes": [p.info['name'] for p in psutil.process_iter(['name']) 
+                                  if 'ffmpeg' in str(p.info['name'])]
+            }
         }
 
         # Add metrics
