@@ -341,48 +341,31 @@ class StreamCapture:
             )
             self.cleanup()
 
-    def stop_capture(self):
-        """Stop capturing with cleanup."""
+    @streaming_bp.route("/stop/<capture_id>", methods=["POST"])
+    def stop_capture(capture_id):
+        """Stop an active capture"""
         try:
-            if self.process and self.process.poll() is None:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    self.process.kill()
-                    logging.warning(f"Forced FFmpeg termination for {self.id}")
-                finally:
-                    stdout, stderr = self.process.communicate()
-                    if stderr:
-                        logging.debug(f"FFmpeg stderr on stop: {stderr.decode()}")
-
-            if self.driver:
-                self.take_debug_screenshot("before_quit")
-                try:
-                    self.driver.quit()
-                except Exception as e:
-                    logging.warning(f"Error quitting Selenium: {str(e)}")
-
-            self.cleanup()
-
-            self.capturing = False
-            self.end_time = datetime.utcnow()
-
-            CaptureService.update_capture_status(
-                self.id,
-                "completed",
-                end_time=self.end_time
+            # Get capture first
+            capture = CaptureService.get_capture(capture_id)
+            if not capture:
+                return jsonify({"error": "Capture not found"}), 404
+                
+            # Load existing capture
+            stream_capture = StreamCapture(
+                stream_url=capture.stream_url,
+                capture_id=capture_id
             )
             
-            logging.info(f"Capture stopped for {self.stream_url}")
-
+            # Stop the capture
+            stream_capture.stop_capture()
+            
+            # Get final status
+            final_status = CaptureService.get_capture_with_metrics(capture_id)
+            return jsonify(final_status)
+            
         except Exception as e:
-            logging.exception("Error stopping capture")
-            CaptureService.update_capture_status(
-                self.id,
-                "failed",
-                error=f"Stop error: {str(e)}"
-            )
+            current_app.logger.exception("Error stopping capture")
+            return jsonify({"error": str(e)}), 500
 
     def cleanup(self):
         """Clean up resources."""
