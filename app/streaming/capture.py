@@ -341,31 +341,79 @@ class StreamCapture:
             )
             self.cleanup()
 
-    @streaming_bp.route("/stop/<capture_id>", methods=["POST"])
-    def stop_capture(capture_id):
-        """Stop an active capture"""
+    def stop_capture(self):
+        """Stop capturing with cleanup."""
         try:
-            # Get capture first
-            capture = CaptureService.get_capture(capture_id)
-            if not capture:
-                return jsonify({"error": "Capture not found"}), 404
-                
-            # Load existing capture
-            stream_capture = StreamCapture(
-                stream_url=capture.stream_url,
-                capture_id=capture_id
+            # First update status to stopping
+            CaptureService.update_capture_status(
+                self.id,
+                "stopping",
+                error=None
+            )
+
+            # Stop FFmpeg process if running
+            if self.process and self.process.poll() is None:
+                try:
+                    self.process.terminate()
+                    self.process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    logging.warning(f"Forced FFmpeg termination for {self.id}")
+                except Exception as e:
+                    logging.error(f"Error terminating FFmpeg: {e}")
+                finally:
+                    try:
+                        stdout, stderr = self.process.communicate(timeout=5)
+                        if stderr:
+                            logging.debug(f"FFmpeg stderr on stop: {stderr.decode()}")
+                    except Exception as e:
+                        logging.error(f"Error getting FFmpeg output: {e}")
+
+            # Take final screenshot and quit Selenium
+            try:
+                if self.driver:
+                    try:
+                        self.take_debug_screenshot("before_quit")
+                    except Exception as e:
+                        logging.warning(f"Failed to take final screenshot: {e}")
+                    
+                    try:
+                        self.driver.quit()
+                    except Exception as e:
+                        logging.warning(f"Error quitting Selenium: {e}")
+            except Exception as e:
+                logging.error(f"Error handling Selenium cleanup: {e}")
+
+            # Clean up resources
+            try:
+                self.cleanup()
+            except Exception as e:
+                logging.error(f"Error in cleanup: {e}")
+
+            # Update final status
+            self.capturing = False
+            self.end_time = datetime.utcnow()
+
+            CaptureService.update_capture_status(
+                self.id,
+                "completed",
+                end_time=self.end_time
             )
             
-            # Stop the capture
-            stream_capture.stop_capture()
-            
-            # Get final status
-            final_status = CaptureService.get_capture_with_metrics(capture_id)
-            return jsonify(final_status)
-            
+            logging.info(f"Successfully stopped capture {self.id} for {self.stream_url}")
+            return True
+
         except Exception as e:
-            current_app.logger.exception("Error stopping capture")
-            return jsonify({"error": str(e)}), 500
+            logging.exception(f"Critical error stopping capture {self.id}")
+            try:
+                CaptureService.update_capture_status(
+                    self.id,
+                    "failed",
+                    error=f"Stop error: {str(e)}"
+                )
+            except Exception as inner_e:
+                logging.error(f"Failed to update error status: {inner_e}")
+            return False
 
     def cleanup(self):
         """Clean up resources."""
