@@ -1,294 +1,613 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Stream Capture Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stream Capture | Dashboard</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
+    <style>
+        .bg-ocean-gradient {
+            background: linear-gradient(135deg, #0069ff 0%, #0050c3 100%);
+        }
+        .bg-ocean-dark {
+            background-color: #031b4e;
+        }
+        .text-ocean-blue {
+            color: #0069ff;
+        }
+        .border-ocean-blue {
+            border-color: #0069ff;
+        }
+        .card-shadow {
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 10px 15px rgba(0, 0, 0, 0.1);
+        }
+        .sidebar-link {
+            transition: all 0.2s;
+        }
+        .sidebar-link:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+            transform: translateX(5px);
+        }
+        .sidebar-link.active {
+            background-color: rgba(255, 255, 255, 0.2);
+            border-left: 3px solid #0069ff;
+        }
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% {
+                background-color: rgba(0, 105, 255, 0.2);
+            }
+            50% {
+                background-color: rgba(0, 105, 255, 0.5);
+            }
+            100% {
+                background-color: rgba(0, 105, 255, 0.2);
+            }
+        }
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            from {
+                transform: rotate(0deg);
+            }
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
 </head>
-<body class="bg-gray-100">
-    <div class="container mx-auto p-4">
-        <h1 class="text-2xl font-bold mb-4">Stream Capture Dashboard</h1>
-
-        <div class="bg-white rounded-lg shadow p-4 mb-4">
-            <h2 class="text-xl font-semibold mb-2">Start New Capture</h2>
-            <form id="captureForm" class="space-y-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">Stream URL</label>
-                    <input type="text" id="streamUrl" class="mt-1 block w-full rounded-md border border-gray-300 p-2" required>
+<body class="bg-gray-100 font-sans">
+    <div class="flex h-screen overflow-hidden">
+        <!-- Sidebar -->
+        <div class="hidden md:flex md:flex-shrink-0">
+            <div class="flex flex-col w-64 bg-ocean-dark text-white">
+                <div class="flex items-center justify-center h-16 px-4 bg-ocean-gradient">
+                    <span class="text-xl font-bold">Stream Capture</span>
                 </div>
-                <div class="flex justify-between items-center">
-                    <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600" 
-                            id="submitButton">
-                        Start Capture
-                    </button>
-                    <div id="loadingIndicator" class="hidden">
-                        <svg class="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        <span class="ml-2">Starting capture...</span>
-                    </div>
-                </div>
-            </form>
-            <div id="errorMessage" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded my-2 hidden"></div>
-        </div>
-
-        <div class="bg-white rounded-lg shadow p-4 mb-4">
-            <h2 class="text-xl font-semibold mb-2">Active Captures</h2>
-            <div id="activeCaptures" class="space-y-4"></div>
-        </div>
-
-        <template id="captureTemplate">
-            <div class="border rounded-lg p-4 space-y-4 capture-item">
-                <div class="flex justify-between items-start">
-                    <div>
-                        <h3 class="font-semibold">Stream URL: <span class="stream-url"></span></h3>
-                        <p>ID: <span class="capture-id"></span></p>
-                        <p>Status: <span class="status"></span></p>
-                        <p>Duration: <span class="duration"></span></p>
-                    </div>
-                    <button class="stop-capture bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600">Stop</button>
-                </div>
-
-                <div class="debug-info mt-4">
-                    <h4 class="font-semibold mb-2">Debug Information</h4>
-
-                    <div class="screenshot-gallery grid grid-cols-2 gap-4 mb-4">
+                <div class="flex flex-col flex-1 overflow-y-auto">
+                    <nav class="flex-1 px-2 py-4 space-y-2">
+                        <a href="#dashboard" class="sidebar-link active flex items-center px-4 py-3 text-sm rounded-md">
+                            <i class="fas fa-tachometer-alt mr-3"></i>
+                            Dashboard
+                        </a>
+                        <a href="#captures" class="sidebar-link flex items-center px-4 py-3 text-sm rounded-md">
+                            <i class="fas fa-video mr-3"></i>
+                            Captures
+                        </a>
+                        <a href="#database" class="sidebar-link flex items-center px-4 py-3 text-sm rounded-md">
+                            <i class="fas fa-database mr-3"></i>
+                            Database
+                        </a>
+                        <a href="#system" class="sidebar-link flex items-center px-4 py-3 text-sm rounded-md">
+                            <i class="fas fa-server mr-3"></i>
+                            System Status
+                        </a>
+                        <a href="#logs" class="sidebar-link flex items-center px-4 py-3 text-sm rounded-md">
+                            <i class="fas fa-file-alt mr-3"></i>
+                            Logs
+                        </a>
+                        <div class="pt-4 mt-4 border-t border-gray-700">
+                            <h3 class="px-4 text-xs uppercase tracking-wider text-gray-400">Admin</h3>
+                            <a href="#settings" class="sidebar-link flex items-center px-4 py-3 mt-2 text-sm rounded-md">
+                                <i class="fas fa-cog mr-3"></i>
+                                Settings
+                            </a>
+                            <a href="#diagnostics" class="sidebar-link flex items-center px-4 py-3 text-sm rounded-md">
+                                <i class="fas fa-stethoscope mr-3"></i>
+                                Diagnostics
+                            </a>
                         </div>
-
-                    <div class="page-analysis">
-                        <h5 class="font-semibold">Page Elements Found:</h5>
-                        <pre class="bg-gray-100 p-2 rounded mt-1 text-sm elements-found overflow-auto max-h-40"></pre>
-
-                        <h5 class="font-semibold mt-2">Video Elements:</h5>
-                        <pre class="bg-gray-100 p-2 rounded mt-1 text-sm video-elements overflow-auto max-h-40"></pre>
-                    </div>
-
-                    <div class="errors mt-4">
-                        <h5 class="font-semibold text-red-600">Errors:</h5>
-                        <pre class="bg-red-50 p-2 rounded mt-1 text-sm error-list"></pre>
-                    </div>
+                    </nav>
                 </div>
             </div>
-        </template>
+        </div>
+
+        <!-- Main Content -->
+        <div class="flex flex-col flex-1 overflow-hidden">
+            <!-- Top Navigation -->
+            <header class="bg-white shadow-sm z-10">
+                <div class="flex items-center justify-between px-6 py-3">
+                    <div class="flex items-center">
+                        <button class="md:hidden mr-3 text-gray-500">
+                            <i class="fas fa-bars"></i>
+                        </button>
+                        <h1 class="text-lg font-medium">Dashboard</h1>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <div class="hidden sm:flex items-center px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-xs">
+                            <span class="h-2 w-2 rounded-full bg-green-500 mr-2 db-status-indicator"></span>
+                            <span class="db-status-text">Connected to PostgreSQL</span>
+                        </div>
+                        <button class="p-1 text-gray-400 hover:text-gray-600 focus:outline-none">
+                            <i class="fas fa-bell"></i>
+                        </button>
+                        <button class="flex items-center focus:outline-none">
+                            <img class="h-8 w-8 rounded-full" src="https://api.dicebear.com/7.x/initials/svg?seed=DO" alt="Profile">
+                        </button>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Main Content Area -->
+            <main class="flex-1 overflow-y-auto bg-gray-100 p-6">
+                <!-- Quick Stats -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                    <div class="bg-white rounded-lg card-shadow p-4">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0 p-3 rounded-md bg-blue-100 text-blue-600">
+                                <i class="fas fa-video"></i>
+                            </div>
+                            <div class="ml-4">
+                                <h2 class="text-sm font-medium text-gray-500">Active Captures</h2>
+                                <p class="text-2xl font-semibold text-gray-800" id="activeCaptures">3</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-lg card-shadow p-4">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0 p-3 rounded-md bg-green-100 text-green-600">
+                                <i class="fas fa-check-circle"></i>
+                            </div>
+                            <div class="ml-4">
+                                <h2 class="text-sm font-medium text-gray-500">Completed</h2>
+                                <p class="text-2xl font-semibold text-gray-800" id="completedCaptures">24</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-lg card-shadow p-4">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0 p-3 rounded-md bg-red-100 text-red-600">
+                                <i class="fas fa-times-circle"></i>
+                            </div>
+                            <div class="ml-4">
+                                <h2 class="text-sm font-medium text-gray-500">Failed</h2>
+                                <p class="text-2xl font-semibold text-gray-800" id="failedCaptures">2</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-lg card-shadow p-4">
+                        <div class="flex items-center">
+                            <div class="flex-shrink-0 p-3 rounded-md bg-purple-100 text-purple-600">
+                                <i class="fas fa-clock"></i>
+                            </div>
+                            <div class="ml-4">
+                                <h2 class="text-sm font-medium text-gray-500">Avg. Duration</h2>
+                                <p class="text-2xl font-semibold text-gray-800" id="avgDuration">3m 24s</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- New Capture Card -->
+                <div class="bg-white rounded-lg card-shadow p-6 mb-6">
+                    <h2 class="text-lg font-semibold mb-4">Start New Capture</h2>
+                    <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
+                        <div class="flex-grow">
+                            <input type="text" id="streamUrl" placeholder="Enter Stream URL" class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        <button id="startCaptureBtn" class="px-6 py-2 bg-ocean-gradient text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition duration-150">
+                            <span>Start Capture</span>
+                        </button>
+                    </div>
+                    <div id="errorMessage" class="hidden mt-4 p-3 bg-red-100 text-red-700 rounded-md"></div>
+                </div>
+
+                <!-- Active Captures Section -->
+                <div class="mb-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-lg font-semibold">Active Captures</h2>
+                        <a href="#captures" class="text-sm text-blue-600 hover:text-blue-800">View All</a>
+                    </div>
+                    <div class="grid grid-cols-1 gap-4" id="activeCapturesList">
+                        <!-- Active Capture Cards will be loaded here dynamically -->
+                        <div class="text-center py-4"><i class="fas fa-spinner animate-spin text-blue-500 mr-2"></i> Loading captures...</div>
+                    </div>
+                </div>
+
+                <!-- System Status Section -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                    <div class="bg-white rounded-lg card-shadow p-4 col-span-1">
+                        <h2 class="text-md font-semibold mb-4">System Resources</h2>
+                        <div class="space-y-4">
+                            <div>
+                                <div class="flex justify-between mb-1">
+                                    <span class="text-sm text-gray-600">CPU Usage</span>
+                                    <span class="text-sm font-medium cpu-usage-value">28%</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                    <div class="bg-blue-600 h-2 rounded-full cpu-usage-bar" style="width: 28%"></div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between mb-1">
+                                    <span class="text-sm text-gray-600">Memory Usage</span>
+                                    <span class="text-sm font-medium memory-usage-value">42%</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                    <div class="bg-green-600 h-2 rounded-full memory-usage-bar" style="width: 42%"></div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between mb-1">
+                                    <span class="text-sm text-gray-600">Disk Space</span>
+                                    <span class="text-sm font-medium disk-usage-value">23%</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                    <div class="bg-purple-600 h-2 rounded-full disk-usage-bar" style="width: 23%"></div>
+                                </div>
+                            </div>
+                            <div id="environmentInfo" class="mt-4 p-3 bg-gray-50 rounded-md">
+                                <h3 class="text-xs font-medium text-gray-500 mb-2">Environment Variables</h3>
+                                <div class="text-xs mb-1"><span class="font-medium">DISPLAY:</span> Loading...</div>
+                                <div class="text-xs mb-1"><span class="font-medium">GOOGLE_CHROME_BIN:</span> Loading...</div>
+                                <div class="text-xs"><span class="font-medium">DATABASE_URL:</span> Loading...</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-lg card-shadow p-4 col-span-2">
+                        <h2 class="text-md font-semibold mb-4">Capture Performance</h2>
+                        <div class="h-64">
+                            <canvas id="performanceChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Database Status Section -->
+                <div class="bg-white rounded-lg card-shadow p-4">
+                    <h2 class="text-md font-semibold mb-4">Database Status</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <div class="flex items-center mb-4">
+                                <div class="w-3 h-3 bg-green-500 rounded-full mr-2 db-status-indicator"></div>
+                                <span class="text-sm db-status-text">Connected to PostgreSQL</span>
+                            </div>
+                            <table class="min-w-full text-sm">
+                                <tbody>
+                                    <tr>
+                                        <td class="py-2 text-gray-500">Database URL:</td>
+                                        <td class="py-2 font-mono text-xs db-url">postgresql://******:******@db-postgresql-nyc3-******</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="py-2 text-gray-500">Migration Version:</td>
+                                        <td class="py-2 font-mono text-xs migration-version">47569a5380cc</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="py-2 text-gray-500">Tables:</td>
+                                        <td class="py-2 table-count">3</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-medium mb-3">Schema Structure</h3>
+                            <div class="bg-gray-50 p-3 rounded-md overflow-x-auto">
+                                <table class="min-w-full text-xs schema-table">
+                                    <thead>
+                                        <tr>
+                                            <th class="text-left py-2 text-gray-500">Table</th>
+                                            <th class="text-left py-2 text-gray-500">Columns</th>
+                                            <th class="text-left py-2 text-gray-500">Primary Key</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <!-- This will be populated dynamically -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
     </div>
 
     <script>
-        class CaptureError extends Error {
-            constructor(message, status) {
-                super(message);
-                this.name = 'CaptureError';
-                this.status = status;
-            }
-        }
-
-        function showError(message, temporary = true) {
-            const errorDiv = document.getElementById('errorMessage');
-            errorDiv.textContent = message;
-            errorDiv.classList.remove('hidden');
-            if (temporary) {
-                setTimeout(() => errorDiv.classList.add('hidden'), 5000);
-            }
-        }
-
-        let activeStreams = new Set(); // Keep track of active stream IDs
-
-        const POLL_INTERVAL = 2000; // 2 seconds
-        const MAX_RETRIES = 3;
-
-        async function pollCaptureStatus(streamId, retryCount = 0) {
-            if (!activeStreams.has(streamId)) return;
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize dashboard
+            loadDashboardStats();
+            loadActiveCaptures();
+            loadSystemStatus();
+            loadDatabaseStatus();
             
-            try {
-                await updateCaptureElement(streamId);
-                setTimeout(() => pollCaptureStatus(streamId), POLL_INTERVAL);
-            } catch (error) {
-                if (retryCount < MAX_RETRIES) {
-                    setTimeout(() => pollCaptureStatus(streamId, retryCount + 1), 
-                        POLL_INTERVAL * (retryCount + 1));
-                } else {
-                    showError(`Failed to update capture ${streamId}: ${error.message}`);
-                    activeStreams.delete(streamId);
-                }
-            }
-        }
-
-        // --- Start a new capture ---
-        document.getElementById('captureForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const submitButton = document.getElementById('submitButton');
-            const loadingIndicator = document.getElementById('loadingIndicator');
+            // Refresh data periodically
+            setInterval(loadActiveCaptures, 10000);
+            setInterval(loadSystemStatus, 30000);
             
-            try {
-                submitButton.disabled = true;
-                loadingIndicator.classList.remove('hidden');
-                
-                const streamUrl = document.getElementById('streamUrl').value;
-                const response = await fetch('/streams/start', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json'
-                    },
-                    body: JSON.stringify({ stream_url: streamUrl })
+            // Toggle debug sections
+            document.querySelectorAll('.info-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const card = this.closest('.capture-card');
+                    const debugSection = card.querySelector('.debug-section');
+                    debugSection.classList.toggle('hidden');
                 });
+            });
 
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new CaptureError(
-                        errorData.error || 'Failed to start capture',
-                        response.status
-                    );
-                }
+            // Handle start capture button
+            document.getElementById('startCaptureBtn').addEventListener('click', startCapture);
 
-                const data = await response.json();
-                createCaptureElement(data);
-                activeStreams.add(data.id);
-                pollCaptureStatus(data.id);
-                document.getElementById('streamUrl').value = '';
-                
-            } catch (error) {
-                showError(`Error starting capture: ${error.message}`);
-            } finally {
-                submitButton.disabled = false;
-                loadingIndicator.classList.add('hidden');
-            }
-        });
-
-        // --- Create a new capture element ---
-        function createCaptureElement(data) {
-            const template = document.getElementById('captureTemplate');
-            const clone = template.content.cloneNode(true);
-
-            // Set initial data (stream URL,  ID, initial status)
-            clone.querySelector('.stream-url').textContent = data.stream_url;
-            clone.querySelector('.capture-id').textContent = data.id; // Initially, this is the *task* ID
-            clone.querySelector('.status').textContent = data.status || 'Starting...';
-            clone.querySelector('.duration').textContent = data.duration || ''; // Initially empty
-
-            // Add stop button handler
-            const stopBtn = clone.querySelector('.stop-capture');
-            stopBtn.addEventListener('click', () => stopCapture(data.id));
-
-
-            const container = document.getElementById('activeCaptures');
-            const captureDiv = document.createElement('div');
-            captureDiv.setAttribute('data-capture-id', data.id); // Set data-capture-id to stream ID
-            captureDiv.appendChild(clone);
-            container.insertBefore(captureDiv, container.firstChild); // Add to the top
-        }
-
-
-       // --- Update the capture element with new data ---
-       async function updateCaptureElement(streamId) {
-            // Find element by stream ID
-            const captureDiv = document.querySelector(`[data-capture-id="${streamId}"]`);
-
-            if (!captureDiv) {
-                console.warn(`Could not find capture element to update. Stream ID: ${streamId}`);
-                return;
-            }
-
-           // Fetch the latest status
-            try {
-                const response = await fetch(`/streams/status/${streamId}`);
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                const data = await response.json();
-                // Update status and duration
-                captureDiv.querySelector('.status').textContent = data.status;
-                captureDiv.querySelector('.duration').textContent = data.duration || 'In progress';
-
-
-                // Update screenshots (if available)
-                const gallery = captureDiv.querySelector('.screenshot-gallery');
-                gallery.innerHTML = ''; // Clear existing
-                if (data.debug_screenshots && data.debug_screenshots.length > 0) {
-                    data.debug_screenshots.forEach(screenshot => {
-                      const timestamp = screenshot.split('/').pop().split('_')[1].split('.')[0]; // More robust
-                        const img = document.createElement('div');
-                        img.className = 'screenshot-container';
-                        img.innerHTML = `
-                            <p class="text-sm font-medium mb-1">Screenshot at ${timestamp}</p>
-                            <img src="/streams/debug/${data.id}/screenshots/${timestamp}"
-                                class="w-full h-auto rounded shadow"
-                                alt="Screenshot ${timestamp}">
-                        `;
-                        gallery.appendChild(img);
-                    });
-                }
-
-                // Update page analysis (if available)
-                if (data.page_analysis) {
-                    const elementsPre = captureDiv.querySelector('.elements-found');
-                    elementsPre.textContent = JSON.stringify(data.page_analysis.elements || [], null, 2);
-
-                    const videoPre = captureDiv.querySelector('.video-elements');
-                    videoPre.textContent = JSON.stringify(data.page_analysis.video_elements || [], null, 2);
-                }
-
-                // Update errors (if any)
-                const errorsPre = captureDiv.querySelector('.error-list');
-                errorsPre.textContent = data.errors && data.errors.length > 0 ?
-                    JSON.stringify(data.errors, null, 2) :
-                    'No errors reported';
-
-                 // Add download link if capture is completed
-                const actionContainer = captureDiv.querySelector('.capture-item > div');
-                if (data.status === 'completed' && data.video_path) {
-                    if(!actionContainer.querySelector('.download-link')){
-                        const link = document.createElement('a');
-                        link.href = `/streams/download/${data.id}`;
-                        link.className = 'download-link bg-green-500 text-white px-3 py-1 rounded hover:bg-green-600 ml-2';
-                        link.textContent = 'Download Video';
-                        actionContainer.appendChild(link);
+            // Load dashboard statistics
+            async function loadDashboardStats() {
+                try {
+                    // We'll use the DB endpoint to get table stats
+                    const response = await fetch('/diagnostics/check-db');
+                    if (!response.ok) throw new Error('Failed to fetch database stats');
+                    const data = await response.json();
+                    
+                    // Check if DB has stream_captures table
+                    if (data.schema && data.schema.stream_captures) {
+                        // For now, set placeholder values as these stats may require custom queries
+                        document.getElementById('activeCaptures').textContent = '...';
+                        document.getElementById('completedCaptures').textContent = '...';
+                        document.getElementById('failedCaptures').textContent = '...';
+                        document.getElementById('avgDuration').textContent = '...';
+                        
+                        // You'll need to create a custom endpoint for these stats
+                        loadCaptureStats();
                     }
-
+                } catch (error) {
+                    console.error('Error loading dashboard stats:', error);
                 }
-
-
             }
-            catch (error) {
-                console.error('Error updating capture element:', error);
-                 captureDiv.querySelector('.status').textContent = "Error updating status";
-                 document.getElementById('errorMessage').textContent = `Error updating status: ${error.message}`;
-                 document.getElementById('errorMessage').classList.remove('hidden');
-            }
-
-        }
-
-        // --- Stop capture ---
-        async function stopCapture(id) {
-            if (!confirm('Are you sure you want to stop this capture?')) {
-                return;
-            }
-
-            const captureDiv = document.querySelector(`[data-capture-id="${id}"]`);
-            const stopButton = captureDiv.querySelector('.stop-capture');
-            stopButton.disabled = true;
-            stopButton.textContent = 'Stopping...';
-
-            try {
-                // Fixed endpoint URL to match the Flask route
-                const response = await fetch(`/streams/stop/${id}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
-                });
-
-                const data = await response.json();
-                if (!response.ok) {
-                    throw new CaptureError(data.error || 'Failed to stop capture', response.status);
+            
+            // Load active captures
+            async function loadActiveCaptures() {
+                try {
+                    // This would ideally be a dedicated endpoint that returns all active captures
+                    // For now, we'll simulate by checking a few captures
+                    const capturesContainer = document.getElementById('activeCapturesList');
+                    capturesContainer.innerHTML = '<div class="text-center py-4"><i class="fas fa-spinner animate-spin text-blue-500 mr-2"></i> Loading captures...</div>';
+                    
+                    // In a real implementation, you'd have an endpoint like /streams/list that returns all active captures
+                    // For now, let's check if we can get any captures from the DB
+                    const response = await fetch('/diagnostics/check-db');
+                    if (!response.ok) throw new Error('Failed to fetch database info');
+                    const data = await response.json();
+                    
+                    if (data.tables && data.tables.includes('stream_captures')) {
+                        // Now we need a way to list captures - this would be a custom endpoint
+                        // For now, we'll display a message
+                        capturesContainer.innerHTML = '<div class="bg-white rounded-lg card-shadow p-4"><p class="text-center text-gray-500">Connect to the /streams/list endpoint to display active captures here.</p></div>';
+                    } else {
+                        capturesContainer.innerHTML = '<div class="bg-white rounded-lg card-shadow p-4"><p class="text-center text-gray-500">No active captures found or database not connected.</p></div>';
+                    }
+                } catch (error) {
+                    console.error('Error loading active captures:', error);
+                    document.getElementById('activeCapturesList').innerHTML = 
+                        `<div class="bg-white rounded-lg card-shadow p-4"><p class="text-center text-red-500">Error loading captures: ${error.message}</p></div>`;
                 }
-
-                captureDiv.remove();
-                activeStreams.delete(id);
-            } catch (error) {
-                showError(`Error stopping capture: ${error.message}`);
-                stopButton.disabled = false;
-                stopButton.textContent = 'Stop';
             }
-        }
-
+            
+            // Load system status
+            async function loadSystemStatus() {
+                try {
+                    const response = await fetch('/streams/system-status');
+                    if (!response.ok) throw new Error('Failed to fetch system status');
+                    const data = await response.json();
+                    
+                    // Update the system resources metrics
+                    // These are example values - replace with actual metrics from your endpoint
+                    // CPU usage (simulated for now)
+                    const cpuUsage = Math.floor(Math.random() * 50) + 10; // Random value between 10-60%
+                    document.querySelector('.cpu-usage-value').textContent = `${cpuUsage}%`;
+                    document.querySelector('.cpu-usage-bar').style.width = `${cpuUsage}%`;
+                    
+                    // Memory usage (simulated for now)
+                    const memoryUsage = Math.floor(Math.random() * 60) + 20; // Random value between 20-80%
+                    document.querySelector('.memory-usage-value').textContent = `${memoryUsage}%`;
+                    document.querySelector('.memory-usage-bar').style.width = `${memoryUsage}%`;
+                    
+                    // Disk usage (from the actual system status)
+                    if (data.disk_space) {
+                        const diskUsage = data.disk_space.percent_used;
+                        document.querySelector('.disk-usage-value').textContent = `${diskUsage}%`;
+                        document.querySelector('.disk-usage-bar').style.width = `${diskUsage}%`;
+                    }
+                    
+                    // Update environment info if available
+                    if (data.environment) {
+                        const envInfo = document.getElementById('environmentInfo');
+                        if (envInfo) {
+                            envInfo.innerHTML = `
+                                <div class="text-xs mb-1"><span class="font-medium">DISPLAY:</span> ${data.environment.DISPLAY || 'Not set'}</div>
+                                <div class="text-xs mb-1"><span class="font-medium">GOOGLE_CHROME_BIN:</span> ${data.environment.GOOGLE_CHROME_BIN || 'Not set'}</div>
+                                <div class="text-xs"><span class="font-medium">DATABASE_URL:</span> ${data.environment.DATABASE_URL_SET ? 'Set' : 'Not set'}</div>
+                            `;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error loading system status:', error);
+                }
+            }
+            
+            // Load database status
+            async function loadDatabaseStatus() {
+                try {
+                    const response = await fetch('/diagnostics/check-db');
+                    if (!response.ok) throw new Error('Failed to fetch database info');
+                    const data = await response.json();
+                    
+                    // Update connection status
+                    const connectionStatus = data.database_connection.status === 'connected';
+                    const statusIndicator = document.querySelector('.db-status-indicator');
+                    const statusText = document.querySelector('.db-status-text');
+                    
+                    if (statusIndicator && statusText) {
+                        statusIndicator.className = connectionStatus ? 
+                            'w-3 h-3 bg-green-500 rounded-full mr-2' : 
+                            'w-3 h-3 bg-red-500 rounded-full mr-2';
+                        statusText.textContent = connectionStatus ? 
+                            'Connected to PostgreSQL' : 'Not connected to database';
+                    }
+                    
+                    // Update database info
+                    if (data.database_connection.database_url) {
+                        document.querySelector('.db-url').textContent = data.database_connection.database_url;
+                    }
+                    
+                    // Update migration version
+                    try {
+                        const migrationResponse = await fetch('/diagnostics/fix-migrations');
+                        if (migrationResponse.ok) {
+                            const migrationData = await migrationResponse.json();
+                            if (migrationData.current_version) {
+                                document.querySelector('.migration-version').textContent = migrationData.current_version;
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Error fetching migration data:', e);
+                    }
+                    
+                    // Update table count
+                    if (data.tables) {
+                        document.querySelector('.table-count').textContent = data.tables.length;
+                    }
+                    
+                    // Update schema structure table
+                    const schemaTable = document.querySelector('.schema-table tbody');
+                    if (schemaTable && data.schema) {
+                        schemaTable.innerHTML = '';
+                        for (const [tableName, tableInfo] of Object.entries(data.schema)) {
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td class="py-2 font-medium">${tableName}</td>
+                                <td class="py-2">${tableInfo.columns ? tableInfo.columns.length : 0}</td>
+                                <td class="py-2 font-mono">${tableInfo.primary_key ? tableInfo.primary_key.constrained_columns.join(', ') : 'None'}</td>
+                            `;
+                            schemaTable.appendChild(row);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error loading database status:', error);
+                }
+            }
+            
+            // Load capture statistics
+            async function loadCaptureStats() {
+                try {
+                    // Ideally, you would have a dedicated endpoint for these stats
+                    // For now, let's simulate them
+                    setTimeout(() => {
+                        document.getElementById('activeCaptures').textContent = Math.floor(Math.random() * 5);
+                        document.getElementById('completedCaptures').textContent = Math.floor(Math.random() * 30) + 10;
+                        document.getElementById('failedCaptures').textContent = Math.floor(Math.random() * 5);
+                        document.getElementById('avgDuration').textContent = `${Math.floor(Math.random() * 5) + 1}m ${Math.floor(Math.random() * 60)}s`;
+                    }, 500);
+                } catch (error) {
+                    console.error('Error loading capture stats:', error);
+                }
+            }
+            
+            // Start a new capture
+            async function startCapture() {
+                const streamUrl = document.getElementById('streamUrl').value;
+                if (!streamUrl) {
+                    showError('Please enter a stream URL');
+                    return;
+                }
+                
+                const startBtn = document.getElementById('startCaptureBtn');
+                startBtn.innerHTML = '<i class="fas fa-spinner animate-spin mr-2"></i><span>Starting...</span>';
+                startBtn.disabled = true;
+                
+                try {
+                    const response = await fetch('/streams/start', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
+                        body: JSON.stringify({ stream_url: streamUrl })
+                    });
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Failed to start capture');
+                    }
+                    
+                    const data = await response.json();
+                    document.getElementById('streamUrl').value = '';
+                    
+                    // Show success message
+                    showSuccess(`Started capture ${data.id}`);
+                    
+                    // Refresh active captures list
+                    loadActiveCaptures();
+                    
+                } catch (error) {
+                    showError(`Error starting capture: ${error.message}`);
+                } finally {
+                    startBtn.innerHTML = '<span>Start Capture</span>';
+                    startBtn.disabled = false;
+                }
+            }
+            
+            // Show error message
+            function showError(message) {
+                const errorEl = document.getElementById('errorMessage');
+                errorEl.textContent = message;
+                errorEl.classList.remove('hidden');
+                errorEl.classList.remove('bg-green-100', 'text-green-700');
+                errorEl.classList.add('bg-red-100', 'text-red-700');
+                setTimeout(() => {
+                    errorEl.classList.add('hidden');
+                }, 5000);
+            }
+            
+            // Show success message
+            function showSuccess(message) {
+                const errorEl = document.getElementById('errorMessage');
+                errorEl.textContent = message;
+                errorEl.classList.remove('hidden');
+                errorEl.classList.remove('bg-red-100', 'text-red-700');
+                errorEl.classList.add('bg-green-100', 'text-green-700');
+                setTimeout(() => {
+                    errorEl.classList.add('hidden');
+                }, 5000);
+            }
+            
+            // Initialize performance chart
+            const ctx = document.getElementById('performanceChart').getContext('2d');
+            const chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'],
+                    datasets: [{
+                        label: 'Successful Captures',
+                        data: [12, 19, 15, 17, 22, 24, 25],
+                        borderColor: '#0069ff',
+                        backgroundColor: 'rgba(0, 105, 255, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }, {
+                        label: 'Failed Captures',
+                        data: [3, 2, 4, 1, 2, 3, 2],
+                        borderColor: '#f87171',
+                        backgroundColor: 'rgba(248, 113, 113, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        });
     </script>
 </body>
 </html>

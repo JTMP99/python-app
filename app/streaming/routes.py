@@ -32,62 +32,69 @@ def cleanup_chrome_processes():
     except Exception as e:
         logger.warning(f"Error in cleanup_chrome_processes: {e}")
 
-@streaming_bp.route("/start", methods=["POST"])
-def start_capture():
-    """Initialize capture and return immediately"""
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
-            
-        stream_url = data.get("stream_url")
-        if not stream_url:
-            return jsonify({"error": "stream_url required"}), 400
-
-        # Cleanup any stray processes
-        cleanup_chrome_processes()
-
-        # Create capture object
+    @streaming_bp.route("/start", methods=["POST"])
+    def start_capture():
+        """Initialize capture and return immediately"""
         try:
-            capture = StreamCapture(stream_url)
-            logger.info(f"Created capture {capture.id} for {stream_url}")
-        except Exception as e:
-            logger.exception("Error creating capture object")
-            return jsonify({"error": f"Failed to create capture: {str(e)}"}), 500
-        
-        # Start capture in background thread
-        def capture_thread():
-            try:
-                capture.start_capture()
-            except Exception as e:
-                logger.exception(f"Error in capture thread: {e}")
-                try:
-                    CaptureService.update_capture_status(
-                        capture.id,
-                        "failed",
-                        error=str(e)
-                    )
-                except Exception as se:
-                    logger.error(f"Failed to update error status: {se}")
-            finally:
-                cleanup_chrome_processes()
+            data = request.get_json()
+            if not data:
+                return jsonify({"error": "No JSON data provided"}), 400
+                
+            stream_url = data.get("stream_url")
+            if not stream_url:
+                return jsonify({"error": "stream_url required"}), 400
+
+            # Add detailed logging here
+            logger.info(f"Starting capture for URL: {stream_url}")
+            logger.info(f"Environment: DISPLAY={os.environ.get('DISPLAY')}, CHROME_BIN={os.environ.get('GOOGLE_CHROME_BIN')}")
             
-        thread = threading.Thread(target=capture_thread)
-        thread.daemon = True
-        thread.start()
+            # Cleanup any stray processes
+            cleanup_chrome_processes()
 
-        # Return immediately with ID
-        return jsonify({
-            "id": str(capture.id),
-            "status": "initialized",
-            "stream_url": stream_url,
-            "created_at": datetime.utcnow().isoformat()
-        }), 202
+            # Create capture object
+            try:
+                capture = StreamCapture(stream_url)
+                logger.info(f"Created capture {capture.id} for {stream_url}")
+            except Exception as e:
+                logger.exception("Error creating capture object")
+                return jsonify({"error": f"Failed to create capture: {str(e)}"}), 500
+            
+            # Start capture in background thread
+            def capture_thread():
+                try:
+                    logger.info(f"Starting capture thread for {capture.id}")
+                    capture.start_capture()
+                    logger.info(f"Capture thread completed for {capture.id}")
+                except Exception as e:
+                    logger.exception(f"Error in capture thread: {e}")
+                    try:
+                        CaptureService.update_capture_status(
+                            capture.id,
+                            "failed",
+                            error=str(e)
+                        )
+                    except Exception as se:
+                        logger.error(f"Failed to update error status: {se}")
+                finally:
+                    cleanup_chrome_processes()
+                
+            thread = threading.Thread(target=capture_thread)
+            thread.daemon = True
+            thread.start()
+            logger.info(f"Started background thread for capture {capture.id}")
 
-    except Exception as e:
-        logger.exception("Error starting capture")
-        cleanup_chrome_processes()
-        return jsonify({"error": str(e)}), 500
+            # Return immediately with ID
+            return jsonify({
+                "id": str(capture.id),
+                "status": "initialized",
+                "stream_url": stream_url,
+                "created_at": datetime.utcnow().isoformat()
+            }), 202
+
+        except Exception as e:
+            logger.exception("Error starting capture")
+            cleanup_chrome_processes()
+            return jsonify({"error": str(e)}), 500
 
 @streaming_bp.route("/status/<capture_id>", methods=["GET"])
 def get_status_endpoint(capture_id):
@@ -354,3 +361,41 @@ def download(capture_id):
     except Exception as e:
         logger.exception(f"Error downloading video for {capture_id}")
         return jsonify({"error": str(e)}), 500
+    
+    @streaming_bp.route("/system-status")
+    def system_status():
+        """Check system status and running processes"""
+        try:
+            # Check Chrome processes
+            chrome_procs = [p.info for p in psutil.process_iter(['pid', 'name', 'cmdline']) 
+                        if 'chrome' in str(p.info.get('name', '')).lower()]
+            
+            # Check FFmpeg processes
+            ffmpeg_procs = [p.info for p in psutil.process_iter(['pid', 'name', 'cmdline']) 
+                        if 'ffmpeg' in str(p.info.get('name', '')).lower()]
+            
+            # Check available space
+            disk_usage = psutil.disk_usage('/')
+            
+            # Check environment variables
+            env_vars = {
+                'DISPLAY': os.environ.get('DISPLAY'),
+                'GOOGLE_CHROME_BIN': os.environ.get('GOOGLE_CHROME_BIN'),
+                'DATABASE_URL_SET': bool(os.environ.get('DATABASE_URL'))
+            }
+            
+            return jsonify({
+                'chrome_processes': len(chrome_procs),
+                'ffmpeg_processes': len(ffmpeg_procs),
+                'disk_space': {
+                    'total_gb': round(disk_usage.total / (1024**3), 2),
+                    'used_gb': round(disk_usage.used / (1024**3), 2),
+                    'free_gb': round(disk_usage.free / (1024**3), 2),
+                    'percent_used': disk_usage.percent
+                },
+                'environment': env_vars,
+                'time': datetime.utcnow().isoformat()
+            })
+        except Exception as e:
+            logger.exception("Error in system status")
+            return jsonify({'error': str(e)}), 500
