@@ -1,12 +1,5 @@
-# app/__init__.py
-from flask import Flask, render_template
-from flask_sqlalchemy import SQLAlchemy
-from flask_migrate import Migrate  # Keep for database migrations
-from .config import Config, DevelopmentConfig, ProductionConfig
-import os
-
-db = SQLAlchemy()
-migrate = Migrate()  # Create Migrate instance
+# Add to the imports at the top
+from flask import Flask, render_template, jsonify
 
 def create_app(config_class=Config):
     app = Flask(__name__)
@@ -28,6 +21,10 @@ def create_app(config_class=Config):
     from app.streaming import streaming_bp
     app.register_blueprint(streaming_bp, url_prefix='/streams')
     
+    # --- Register diagnostics blueprint ---
+    from app.diagnostics import diagnostics_bp
+    app.register_blueprint(diagnostics_bp, url_prefix='/diagnostics')
+    
     # --- Other blueprints (commented out for now) ---
     # from app.scraping import scraping_bp
     # app.register_blueprint(scraping_bp, url_prefix='/scraping')
@@ -36,5 +33,14 @@ def create_app(config_class=Config):
     @app.route("/")
     def dashboard():
         return render_template("dashboard.html")
+        
+    # Add a database configuration endpoint
+    @app.route('/db-config')
+    def db_config():
+        return jsonify({
+            'database_url': app.config.get('SQLALCHEMY_DATABASE_URI', 'Not set'),
+            'debug': app.config.get('DEBUG', False),
+            'env': os.environ.get('FLASK_ENV', 'development')
+        })
     
     return app

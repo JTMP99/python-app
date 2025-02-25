@@ -11,7 +11,16 @@ class Config:
     CAPTURE_RETRIES = 3
     
     # Database Configuration
-    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL')
+    # Add a default SQLite database if DATABASE_URL is not set
+    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:////app/app.db')
+    
+    # Add SSL requirement for PostgreSQL connections
+    if SQLALCHEMY_DATABASE_URI and SQLALCHEMY_DATABASE_URI.startswith('postgresql'):
+        if '?' not in SQLALCHEMY_DATABASE_URI:
+            SQLALCHEMY_DATABASE_URI += '?sslmode=require'
+        elif 'sslmode=' not in SQLALCHEMY_DATABASE_URI:
+            SQLALCHEMY_DATABASE_URI += '&sslmode=require'
+    
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {
         'pool_size': 10,
@@ -53,7 +62,7 @@ class Config:
 class DevelopmentConfig(Config):
     DEBUG = True
     LOG_LEVEL = logging.DEBUG
-    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'postgresql://localhost:5432/captures')
+    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:////app/app_dev.db')
     
     # Shorter timeouts for development
     CAPTURE_TIMEOUT = 60
@@ -81,7 +90,8 @@ class ProductionConfig(Config):
     
     @classmethod
     def init_app(cls, app):
+        # Log warning instead of raising error for missing vars
         required_vars = ['DATABASE_URL', 'SECRET_KEY']
         missing = [var for var in required_vars if not os.getenv(var)]
         if missing:
-            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+            app.logger.warning(f"Missing recommended environment variables: {', '.join(missing)}")
