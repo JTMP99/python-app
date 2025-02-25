@@ -81,3 +81,27 @@ def fix_migrations():
             'error': str(e),
             'type': type(e).__name__
         }), 500
+        
+@diagnostics_bp.route('/check-routes')
+def check_routes():
+    """List all registered routes in the application."""
+    try:
+        from flask import current_app
+        routes = []
+        
+        for rule in current_app.url_map.iter_rules():
+            routes.append({
+                'endpoint': rule.endpoint,
+                'methods': [method for method in rule.methods if method not in ('HEAD', 'OPTIONS')],
+                'path': str(rule)
+            })
+        
+        return jsonify({
+            'total_routes': len(routes),
+            'routes': sorted(routes, key=lambda r: r['path'])
+        })
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'type': type(e).__name__
+        }), 500
