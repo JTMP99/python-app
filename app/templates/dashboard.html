@@ -269,11 +269,10 @@
             stopButton.textContent = 'Stopping...';
 
             try {
-                // Change this line
+                // Fixed endpoint URL to match the Flask route
                 const response = await fetch(`/streams/stop/${id}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' }
-                    // No need to send the ID in the body since it's in the URL
                 });
 
                 const data = await response.json();
