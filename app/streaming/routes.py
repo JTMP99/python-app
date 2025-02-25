@@ -399,3 +399,13 @@ def download(capture_id):
         except Exception as e:
             logger.exception("Error in system status")
             return jsonify({'error': str(e)}), 500
+            
+@streaming_bp.route("/test", methods=["GET"])
+def test_endpoint():
+    """Simple test endpoint to verify the blueprint is working."""
+    return jsonify({
+        "status": "success", 
+        "message": "Streaming routes are working!",
+        "blueprint": "streaming_bp",
+        "url_prefix": "/streams"
+    })
