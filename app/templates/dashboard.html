@@ -301,10 +301,71 @@
                             </div>
                         </div>
                     </div>
+                <div class="bg-white rounded-lg card-shadow p-4 mt-6">
+                    <h2 class="text-md font-semibold mb-4">Diagnostics & API Endpoints</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <!-- Database Endpoints -->
+                        <div class="p-3 bg-blue-50 rounded-lg">
+                            <h3 class="text-sm font-medium text-blue-800 mb-2">Database</h3>
+                            <div class="space-y-2">
+                                <a href="/diagnostics/check-db" target="_blank" class="block px-3 py-2 bg-white rounded border border-blue-200 hover:bg-blue-100 transition">
+                                    <span class="text-xs font-mono text-blue-700">/diagnostics/check-db</span>
+                                    <p class="text-xs text-gray-600 mt-1">Check database connection and schema</p>
+                                </a>
+                                <a href="/db-config" target="_blank" class="block px-3 py-2 bg-white rounded border border-blue-200 hover:bg-blue-100 transition">
+                                    <span class="text-xs font-mono text-blue-700">/db-config</span>
+                                    <p class="text-xs text-gray-600 mt-1">View database configuration</p>
+                                </a>
+                                <a href="/diagnostics/fix-migrations" target="_blank" class="block px-3 py-2 bg-white rounded border border-blue-200 hover:bg-blue-100 transition">
+                                    <span class="text-xs font-mono text-blue-700">/diagnostics/fix-migrations</span>
+                                    <p class="text-xs text-gray-600 mt-1">Check and fix database migrations</p>
+                                </a>
+                            </div>
+                        </div>
+                        
+                        <!-- System Endpoints -->
+                        <div class="p-3 bg-green-50 rounded-lg">
+                            <h3 class="text-sm font-medium text-green-800 mb-2">System</h3>
+                            <div class="space-y-2">
+                                <a href="/streams/system-status" target="_blank" class="block px-3 py-2 bg-white rounded border border-green-200 hover:bg-green-100 transition">
+                                    <span class="text-xs font-mono text-green-700">/streams/system-status</span>
+                                    <p class="text-xs text-gray-600 mt-1">Check system resources and processes</p>
+                                </a>
+                            </div>
+                        </div>
+                        
+                        <!-- Capture Endpoints -->
+                        <div class="p-3 bg-purple-50 rounded-lg">
+                            <h3 class="text-sm font-medium text-purple-800 mb-2">Captures</h3>
+                            <div class="space-y-2">
+                                <div class="block px-3 py-2 bg-white rounded border border-purple-200">
+                                    <span class="text-xs font-mono text-purple-700">/streams/start</span>
+                                    <p class="text-xs text-gray-600 mt-1">POST: Start a new capture</p>
+                                </div>
+                                <div class="block px-3 py-2 bg-white rounded border border-purple-200">
+                                    <span class="text-xs font-mono text-purple-700">/streams/stop/{capture_id}</span>
+                                    <p class="text-xs text-gray-600 mt-1">POST: Stop a running capture</p>
+                                </div>
+                                <div class="block px-3 py-2 bg-white rounded border border-purple-200">
+                                    <span class="text-xs font-mono text-purple-700">/streams/status/{capture_id}</span>
+                                    <p class="text-xs text-gray-600 mt-1">GET: Check capture status</p>
+                                </div>
+                                <div class="block px-3 py-2 bg-white rounded border border-purple-200">
+                                    <span class="text-xs font-mono text-purple-700">/streams/debug/{capture_id}</span>
+                                    <p class="text-xs text-gray-600 mt-1">GET: Debug information for a capture</p>
+                                </div>
+                                <div class="block px-3 py-2 bg-white rounded border border-purple-200">
+                                    <span class="text-xs font-mono text-purple-700">/streams/download/{capture_id}</span>
+                                    <p class="text-xs text-gray-600 mt-1">GET: Download a completed video</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-            </main>
-        </div>
+            </div>
+        </main>
     </div>
+</div>
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
@@ -503,6 +564,7 @@
             }
             
             // Start a new capture
+            // Replace the startCapture function in your script with this version
             async function startCapture() {
                 const streamUrl = document.getElementById('streamUrl').value;
                 if (!streamUrl) {
@@ -515,6 +577,7 @@
                 startBtn.disabled = true;
                 
                 try {
+                    // Fix for the endpoint URL issue - using the correct endpoint format
                     const response = await fetch('/streams/start', {
                         method: 'POST',
                         headers: {
@@ -524,12 +587,17 @@
                         body: JSON.stringify({ stream_url: streamUrl })
                     });
                     
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.error || 'Failed to start capture');
+                    // Check if response is JSON or not before parsing
+                    const contentType = response.headers.get('content-type');
+                    if (!contentType || !contentType.includes('application/json')) {
+                        throw new Error('Server returned non-JSON response. Check the API endpoint.');
                     }
                     
                     const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Failed to start capture');
+                    }
+                    
                     document.getElementById('streamUrl').value = '';
                     
                     // Show success message
@@ -540,6 +608,7 @@
                     
                 } catch (error) {
                     showError(`Error starting capture: ${error.message}`);
+                    console.error('Full error:', error);
                 } finally {
                     startBtn.innerHTML = '<span>Start Capture</span>';
                     startBtn.disabled = false;
