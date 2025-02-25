@@ -577,23 +577,39 @@
                 startBtn.disabled = true;
                 
                 try {
-                    // Fix for the endpoint URL issue - using the correct endpoint format
+                    console.log('Attempting to start capture for URL:', streamUrl);
+                    
+                    // Create the exact payload expected by the server
+                    const payload = JSON.stringify({ stream_url: streamUrl });
+                    console.log('Request payload:', payload);
+                    
+                    // Make the request with explicit debugging
                     const response = await fetch('/streams/start', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                             'Accept': 'application/json'
                         },
-                        body: JSON.stringify({ stream_url: streamUrl })
+                        body: payload
                     });
                     
-                    // Check if response is JSON or not before parsing
-                    const contentType = response.headers.get('content-type');
-                    if (!contentType || !contentType.includes('application/json')) {
-                        throw new Error('Server returned non-JSON response. Check the API endpoint.');
+                    console.log('Response status:', response.status);
+                    console.log('Response headers:', response.headers);
+                    
+                    // Try to get the response text first to see what's coming back
+                    const responseText = await response.text();
+                    console.log('Response text:', responseText);
+                    
+                    // Then try to parse as JSON if it looks like JSON
+                    let data;
+                    try {
+                        data = JSON.parse(responseText);
+                        console.log('Parsed JSON data:', data);
+                    } catch (parseError) {
+                        console.error('Failed to parse JSON:', parseError);
+                        throw new Error('Server returned invalid JSON. Response: ' + responseText.substring(0, 100) + '...');
                     }
                     
-                    const data = await response.json();
                     if (!response.ok) {
                         throw new Error(data.error || 'Failed to start capture');
                     }
@@ -604,7 +620,7 @@
                     showSuccess(`Started capture ${data.id}`);
                     
                     // Refresh active captures list
-                    loadActiveCaptures();
+                    setTimeout(loadActiveCaptures, 1000);
                     
                 } catch (error) {
                     showError(`Error starting capture: ${error.message}`);
