@@ -49,8 +49,11 @@ RUN Xvfb :99 -screen 0 1920x1080x24 &
 EXPOSE 8080
 
 # Run database setup script first, then start gunicorn
-CMD python setup_db.py && \
-    gunicorn --bind "0.0.0.0:8080" \
+
+# CMD python setup_db.py && \
+#    gunicorn --bind "0.0.0.0:8080" \
+
+CMD gunicorn --bind "0.0.0.0:8080" \
     --workers "1" \
     --threads "2" \
     --timeout "120" \

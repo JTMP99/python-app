@@ -1,5 +1,12 @@
-# Add to the imports at the top
-from flask import Flask, render_template, jsonify
+# app/__init__.py
+from flask import Flask, render_template
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
+from .config import Config, DevelopmentConfig, ProductionConfig  # Add this import line
+import os
+
+db = SQLAlchemy()
+migrate = Migrate()
 
 def create_app(config_class=Config):
     app = Flask(__name__)
