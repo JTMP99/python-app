@@ -363,6 +363,91 @@
                     </div>
                 </div>
             </div>
+            <div class="bg-white rounded-lg card-shadow p-4 mt-6">
+    <div class="flex justify-between items-center mb-4">
+        <h2 class="text-md font-semibold">System Diagnostics</h2>
+        <button id="runAllDiagnostics" class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600">
+            Run All Tests
+        </button>
+    </div>
+    
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div class="p-3 border rounded-lg">
+            <h3 class="text-sm font-medium mb-2 flex items-center justify-between">
+                <span>Application Routes</span>
+                <button data-endpoint="/diagnostics/routes" class="diagnostic-btn px-2 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200">
+                    Test
+                </button>
+            </h3>
+            <div class="diagnostic-result h-24 overflow-auto text-xs bg-gray-50 p-2 rounded">
+                Click Test to check routes
+            </div>
+        </div>
+        
+        <div class="p-3 border rounded-lg">
+            <h3 class="text-sm font-medium mb-2 flex items-center justify-between">
+                <span>Environment Info</span>
+                <button data-endpoint="/diagnostics/environment" class="diagnostic-btn px-2 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200">
+                    Test
+                </button>
+            </h3>
+            <div class="diagnostic-result h-24 overflow-auto text-xs bg-gray-50 p-2 rounded">
+                Click Test to check environment
+            </div>
+        </div>
+        
+        <div class="p-3 border rounded-lg">
+            <h3 class="text-sm font-medium mb-2 flex items-center justify-between">
+                <span>Process Info</span>
+                <button data-endpoint="/diagnostics/processes" class="diagnostic-btn px-2 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200">
+                    Test
+                </button>
+            </h3>
+            <div class="diagnostic-result h-24 overflow-auto text-xs bg-gray-50 p-2 rounded">
+                Click Test to check processes
+            </div>
+        </div>
+        
+        <div class="p-3 border rounded-lg">
+            <h3 class="text-sm font-medium mb-2 flex items-center justify-between">
+                <span>Captures Summary</span>
+                <button data-endpoint="/diagnostics/captures-summary" class="diagnostic-btn px-2 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200">
+                    Test
+                </button>
+            </h3>
+            <div class="diagnostic-result h-24 overflow-auto text-xs bg-gray-50 p-2 rounded">
+                Click Test to check captures
+            </div>
+        </div>
+        
+        <div class="p-3 border rounded-lg">
+            <h3 class="text-sm font-medium mb-2 flex items-center justify-between">
+                <span>Selenium Test</span>
+                <button data-endpoint="/diagnostics/test-selenium" class="diagnostic-btn px-2 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200">
+                    Test
+                </button>
+            </h3>
+            <div class="diagnostic-result h-24 overflow-auto text-xs bg-gray-50 p-2 rounded">
+                Click Test to check Selenium
+            </div>
+        </div>
+        
+        <div class="p-3 border rounded-lg">
+            <h3 class="text-sm font-medium mb-2 flex items-center justify-between">
+                <span>Direct Stream Test</span>
+                <button id="directStreamTest" class="px-2 py-1 text-xs bg-gray-100 rounded hover:bg-gray-200">
+                    Test
+                </button>
+            </h3>
+            <div class="diagnostic-result h-24 overflow-auto text-xs bg-gray-50 p-2 rounded">
+                Click Test to check direct stream post
+            </div>
+        </div>
+    </div>
+    <div class="p-3 border rounded-lg mt-4">
+        <h3 class="text-sm font-medium mb-2">Diagnostic Results</h3>
+        <pre id="diagnosticOutput" class="text-xs bg-gray-50 p-2 rounded h-40 overflow-auto">
+Run a test to see detailed results here
         </main>
     </div>
 </div>
@@ -684,6 +769,101 @@
                 }
             });
         });
-    </script>
+    <script>
+    // Diagnostic functions
+    document.addEventListener('DOMContentLoaded', function() {
+        // Handle diagnostic button clicks
+        document.querySelectorAll('.diagnostic-btn').forEach(btn => {
+            btn.addEventListener('click', async function() {
+                const endpoint = this.dataset.endpoint;
+                const resultElement = this.closest('div').querySelector('.diagnostic-result');
+                
+                resultElement.textContent = 'Loading...';
+                try {
+                    const response = await fetch(endpoint);
+                    const data = await response.json();
+                    
+                    // Show summarized result in the small box
+                    resultElement.textContent = getResultSummary(endpoint, data);
+                    
+                    // Show full result in the large output area
+                    document.getElementById('diagnosticOutput').textContent = JSON.stringify(data, null, 2);
+                } catch (error) {
+                    resultElement.textContent = `Error: ${error.message}`;
+                    document.getElementById('diagnosticOutput').textContent = `Error fetching ${endpoint}: ${error.message}`;
+                }
+            });
+        });
+        
+        // Test direct stream post
+        document.getElementById('directStreamTest').addEventListener('click', async function() {
+            const resultElement = this.closest('div').querySelector('.diagnostic-result');
+            resultElement.textContent = 'Testing direct POST to /streams/start...';
+            
+            try {
+                const response = await fetch('/streams/start', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        stream_url: 'https://example.com/test-stream' 
+                    })
+                });
+                
+                let responseData;
+                try {
+                    const responseText = await response.text();
+                    try {
+                        responseData = JSON.parse(responseText);
+                    } catch (e) {
+                        responseData = { raw_response: responseText.substring(0, 100) + '...' };
+                    }
+                } catch (e) {
+                    responseData = { error: 'Could not read response body' };
+                }
+                
+                const result = {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: Object.fromEntries([...response.headers.entries()]),
+                    body: responseData
+                };
+                
+                resultElement.textContent = `Status: ${response.status} ${response.statusText}`;
+                document.getElementById('diagnosticOutput').textContent = JSON.stringify(result, null, 2);
+            } catch (error) {
+                resultElement.textContent = `Error: ${error.message}`;
+                document.getElementById('diagnosticOutput').textContent = `Error with direct stream test: ${error.message}`;
+            }
+        });
+        
+        // Run all diagnostics
+        document.getElementById('runAllDiagnostics').addEventListener('click', function() {
+            document.querySelectorAll('.diagnostic-btn').forEach(btn => btn.click());
+            setTimeout(() => {
+                document.getElementById('directStreamTest').click();
+            }, 1000);
+        });
+        
+        // Helper to summarize results
+        function getResultSummary(endpoint, data) {
+            switch(endpoint) {
+                case '/diagnostics/routes':
+                    return `Found ${data.total_routes || 0} routes`;
+                case '/diagnostics/environment':
+                    return `Python ${data.python_version?.split(' ')[0] || 'Unknown'}, DISPLAY=${data.environment_variables?.DISPLAY || 'Not set'}`;
+                case '/diagnostics/processes':
+                    return `${data.relevant_processes?.length || 0} relevant processes, CPU: ${data.cpu_percent || 0}%`;
+                case '/diagnostics/captures-summary':
+                    return `Total: ${data.total_captures || 0}, Failed: ${data.by_status?.failed || 0}`;
+                case '/diagnostics/test-selenium':
+                    return data.selenium_test?.success ? 'Selenium working! ✓' : 'Selenium error ✗';
+                default:
+                    return `Got response: ${Object.keys(data).length} keys`;
+            }
+        }
+    });
+</script>
 </body>
 </html>
