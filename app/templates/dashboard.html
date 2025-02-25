@@ -566,7 +566,7 @@
             // Start a new capture
             // Replace the startCapture function in your script with this version
             async function startCapture() {
-                const streamUrl = document.getElementById('streamUrl').value;
+                const streamUrl = document.getElementById('streamUrl').value.trim();
                 if (!streamUrl) {
                     showError('Please enter a stream URL');
                     return;
@@ -577,37 +577,33 @@
                 startBtn.disabled = true;
                 
                 try {
-                    console.log('Attempting to start capture for URL:', streamUrl);
+                    // Use absolute URL to ensure correct path
+                    const fullUrl = window.location.origin + '/streams/start';
+                    console.log('Posting to:', fullUrl);
                     
-                    // Create the exact payload expected by the server
-                    const payload = JSON.stringify({ stream_url: streamUrl });
-                    console.log('Request payload:', payload);
-                    
-                    // Make the request with explicit debugging
-                    const response = await fetch('/streams/start', {
+                    const response = await fetch(fullUrl, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                             'Accept': 'application/json'
                         },
-                        body: payload
+                        body: JSON.stringify({ stream_url: streamUrl })
                     });
                     
+                    let responseText = await response.text();
                     console.log('Response status:', response.status);
-                    console.log('Response headers:', response.headers);
+                    console.log('Response text (first 100 chars):', responseText.substring(0, 100));
                     
-                    // Try to get the response text first to see what's coming back
-                    const responseText = await response.text();
-                    console.log('Response text:', responseText);
-                    
-                    // Then try to parse as JSON if it looks like JSON
+                    // Try to parse JSON response
                     let data;
                     try {
                         data = JSON.parse(responseText);
-                        console.log('Parsed JSON data:', data);
-                    } catch (parseError) {
-                        console.error('Failed to parse JSON:', parseError);
-                        throw new Error('Server returned invalid JSON. Response: ' + responseText.substring(0, 100) + '...');
+                    } catch (e) {
+                        if (response.status === 404) {
+                            throw new Error('Endpoint not found (404). Check that the /streams/start endpoint exists.');
+                        } else {
+                            throw new Error('Server returned invalid JSON. Response: ' + responseText.substring(0, 100));
+                        }
                     }
                     
                     if (!response.ok) {
@@ -615,13 +611,8 @@
                     }
                     
                     document.getElementById('streamUrl').value = '';
-                    
-                    // Show success message
                     showSuccess(`Started capture ${data.id}`);
-                    
-                    // Refresh active captures list
                     setTimeout(loadActiveCaptures, 1000);
-                    
                 } catch (error) {
                     showError(`Error starting capture: ${error.message}`);
                     console.error('Full error:', error);
